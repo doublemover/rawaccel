@@ -267,6 +267,10 @@ public value struct DeviceConfig {
     [JsonProperty("Use constant time interval based on polling rate", Required = Required::Default)]
     bool pollTimeLock;
 
+    [MarshalAs(UnmanagedType::U1)]
+    [JsonProperty("Acceleration only while Mouse1 is held", Required = Required::Default)]
+    bool accelOnlyWhileMouse1;
+
     [JsonProperty("DPI (normalizes input speed unit: counts/ms -> in/s)")]
     int dpi;
 
@@ -296,11 +300,17 @@ public value struct DeviceConfig {
         return maximumTime != ra::DEFAULT_TIME_MAX;
     }
 
+    bool ShouldSerializeaccelOnlyWhileMouse1()
+    {
+        return accelOnlyWhileMouse1 == true;
+    }
+
     void Init(const ra::device_config& cfg) 
     {
         disable = cfg.disable;
         setExtraInfo = cfg.set_extra_info;
         pollTimeLock = cfg.poll_time_lock;
+        accelOnlyWhileMouse1 = cfg.accel_only_while_mouse1;
         dpi = cfg.dpi;
         pollingRate = cfg.polling_rate;
         minimumTime = cfg.clamp.min;
@@ -691,6 +701,7 @@ public:
         base_data->default_dev_cfg.disable = defaultDeviceConfig.disable;
         base_data->default_dev_cfg.set_extra_info = defaultDeviceConfig.setExtraInfo;
         base_data->default_dev_cfg.poll_time_lock = defaultDeviceConfig.pollTimeLock;
+        base_data->default_dev_cfg.accel_only_while_mouse1 = defaultDeviceConfig.accelOnlyWhileMouse1;
         base_data->default_dev_cfg.dpi = defaultDeviceConfig.dpi;
         base_data->default_dev_cfg.polling_rate = defaultDeviceConfig.pollingRate;
         base_data->default_dev_cfg.clamp.min = defaultDeviceConfig.minimumTime;
@@ -747,7 +758,7 @@ public:
 
         DeviceErrors^ devErrors = gcnew DeviceErrors(devices);
         if (!devErrors->Empty()) {
-            sb->Append(profErrors->ToString());
+            sb->Append(devErrors->ToString());
         }
 
         devices->RemoveAt(devices->Count - 1);

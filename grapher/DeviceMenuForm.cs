@@ -39,9 +39,10 @@ namespace grapher
             DpiLabel = MakeConfigLabel("DPI:");
             RateLabel = MakeConfigLabel("Polling rate:");
             DisableLabel = MakeConfigLabel("Disable:");
+            Mouse1AccelLabel = MakeConfigLabel("Mouse1-gated accel:");
             OverrideLabel = MakeConfigLabel("Override defaults:");
 
-            var maxLabel = OverrideLabel;
+            var maxLabel = Mouse1AccelLabel;
             tablePanel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 2));
             tablePanel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, maxLabel.PreferredSize.Width + maxLabel.Margin.Left + maxLabel.Margin.Right));
             tablePanel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 1));
@@ -66,7 +67,15 @@ namespace grapher
                 Checked = defaultConfig.disable,
             };
 
+            DefaultMouse1AccelCheck = new CheckBox
+            {
+                Text = "Accel only while Mouse1 is held by default",
+                AutoSize = true,
+                Checked = defaultConfig.accelOnlyWhileMouse1,
+            };
+
             topPanel.Controls.Add(DefaultDisableCheck);
+            topPanel.Controls.Add(DefaultMouse1AccelCheck);
 
             tablePanel.Controls.Add(topPanel, 0, 0);
             tablePanel.SetColumnSpan(topPanel, columns);
@@ -150,12 +159,15 @@ namespace grapher
             DpiInput = MakeNumericInput();
             RateInput = MakeNumericInput();
             DisableCheck = MakeCheck();
+            Mouse1AccelCheck = MakeCheck();
             OverrideCheck = MakeCheck();
 
             tablePanel.Controls.Add(OverrideLabel, 1, 2);
             tablePanel.Controls.Add(OverrideCheck, 2, 2);
             tablePanel.Controls.Add(DisableLabel, 1, 3);
             tablePanel.Controls.Add(DisableCheck, 2, 3);
+            tablePanel.Controls.Add(Mouse1AccelLabel, 1, 4);
+            tablePanel.Controls.Add(Mouse1AccelCheck, 2, 4);
             tablePanel.Controls.Add(DpiLabel, 1, 5);
             tablePanel.Controls.Add(DpiInput, 2, 5);
             tablePanel.Controls.Add(RateLabel, 1, 6);
@@ -179,6 +191,7 @@ namespace grapher
             OverrideCheck.Click += OverrideCheck_Click;
             OverrideCheck.CheckedChanged += OverrideCheck_Checked;
             DefaultDisableCheck.CheckedChanged += DefaultDisableCheck_Checked;
+            DefaultMouse1AccelCheck.CheckedChanged += DefaultMouse1AccelCheck_Checked;
             IdText.DoubleClick += SelectAllText;
             DeviceSelect.SelectedIndexChanged += DeviceSelect_SelectedIndexChanged;
             Manager.DeviceChange += OnDeviceChange;
@@ -241,6 +254,7 @@ namespace grapher
         private ListBox DeviceSelect { get; }
 
         private CheckBox DefaultDisableCheck { get; }
+        private CheckBox DefaultMouse1AccelCheck { get; }
 
         private TextBox IdText { get; }
         private Panel IdPanel { get; }
@@ -250,6 +264,9 @@ namespace grapher
 
         private Label DisableLabel { get; }
         private CheckBox DisableCheck { get; }
+
+        private Label Mouse1AccelLabel { get; }
+        private CheckBox Mouse1AccelCheck { get; }
 
         private Label DpiLabel { get; }
         private NumericUpDown DpiInput { get; }
@@ -299,6 +316,8 @@ namespace grapher
             OverrideCheck.Visible = visible;
             DisableLabel.Visible = visible;
             DisableCheck.Visible = visible;
+            Mouse1AccelLabel.Visible = visible;
+            Mouse1AccelCheck.Visible = visible;
             DpiInput.Visible = visible;
             DpiLabel.Visible = visible;
             RateInput.Visible = visible;
@@ -309,6 +328,8 @@ namespace grapher
         {
             DisableLabel.Enabled = enable;
             DisableCheck.Enabled = enable;
+            Mouse1AccelLabel.Enabled = enable;
+            Mouse1AccelCheck.Enabled = enable;
             DpiInput.Enabled = enable;
             DpiLabel.Enabled = enable;
             RateInput.Enabled = enable;
@@ -328,6 +349,7 @@ namespace grapher
             var item = Selected;
             bool oride = item.overrideDefaultConfig;
             DisableCheck.Checked = oride ? item.newConfig.disable : defaultConfig.disable;
+            Mouse1AccelCheck.Checked = oride ? item.newConfig.accelOnlyWhileMouse1 : defaultConfig.accelOnlyWhileMouse1;
             DpiInput.Value = oride ? item.newConfig.dpi : defaultConfig.dpi;
             RateInput.Value = oride ? item.newConfig.pollingRate : defaultConfig.pollingRate;
         }
@@ -338,6 +360,7 @@ namespace grapher
             bool oride = OverrideCheck.Checked;
             item.overrideDefaultConfig = oride;
             item.newConfig.disable = oride ? DisableCheck.Checked : defaultConfig.disable;
+            item.newConfig.accelOnlyWhileMouse1 = oride ? Mouse1AccelCheck.Checked : defaultConfig.accelOnlyWhileMouse1;
             item.newConfig.dpi = oride ? (int)DpiInput.Value : defaultConfig.dpi;
             item.newConfig.pollingRate = oride ? (int)RateInput.Value : defaultConfig.pollingRate;
         }
@@ -365,6 +388,16 @@ namespace grapher
             if (AnySelected && !Selected.overrideDefaultConfig)
             {
                 DisableCheck.Checked = DefaultDisableCheck.Checked;
+            }
+        }
+
+        private void DefaultMouse1AccelCheck_Checked(object sender, EventArgs e)
+        {
+            defaultConfig.accelOnlyWhileMouse1 = DefaultMouse1AccelCheck.Checked;
+
+            if (AnySelected && !Selected.overrideDefaultConfig)
+            {
+                Mouse1AccelCheck.Checked = DefaultMouse1AccelCheck.Checked;
             }
         }
 

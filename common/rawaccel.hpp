@@ -13,6 +13,7 @@ namespace rawaccel {
         bool disable = false;
         bool set_extra_info = false;
         bool poll_time_lock = false;
+        bool accel_only_while_mouse1 = false;
         int dpi = 0;
         int polling_rate = 0;
         time_clamp clamp;

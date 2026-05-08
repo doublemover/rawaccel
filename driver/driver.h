@@ -22,6 +22,8 @@ typedef struct _DEVICE_EXTENSION {
     bool enable;
     bool keep_time;
     bool set_extra_info;
+    bool accel_only_while_mouse1;
+    bool mouse1_held;
     double input_dpi_normalization_factor;
     counter_t counter;
     ra::time_clamp clamp;

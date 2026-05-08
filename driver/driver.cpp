@@ -43,6 +43,40 @@ ValidCarry(double x, double y)
 
 #pragma float_control(pop)
 
+static __forceinline
+VOID
+ResetAccelerationState(PDEVICE_EXTENSION devExt)
+{
+    devExt->carry.x = 0;
+    devExt->carry.y = 0;
+    devExt->speed_processor.init(devExt->mod_settings.prof.speed_processor_args);
+}
+
+static __forceinline
+VOID
+UpdateMouse1State(PDEVICE_EXTENSION devExt, USHORT buttonFlags)
+{
+    bool transitioned = false;
+
+    if (buttonFlags & MOUSE_LEFT_BUTTON_DOWN) {
+        if (!devExt->mouse1_held) {
+            transitioned = true;
+        }
+        devExt->mouse1_held = true;
+    }
+
+    if (buttonFlags & MOUSE_LEFT_BUTTON_UP) {
+        if (devExt->mouse1_held) {
+            transitioned = true;
+        }
+        devExt->mouse1_held = false;
+    }
+
+    if (transitioned && devExt->accel_only_while_mouse1) {
+        ResetAccelerationState(devExt);
+    }
+}
+
 __declspec(guard(ignore))
 VOID
 RawaccelCallback(
@@ -77,24 +111,39 @@ Arguments:
 
     auto num_packets = InputDataEnd - InputDataStart;
 
-    if (num_packets > 0 &&
-        !(InputDataStart->Flags & MOUSE_MOVE_ABSOLUTE) &&
-        devExt->enable) {
-        
-        milliseconds time;
-        if (devExt->keep_time) {
-            counter_t now = KeQueryPerformanceCounter(NULL).QuadPart;
-            counter_t ticks = now - devExt->counter;
-            devExt->counter = now;
-            milliseconds raw = ticks * global.tick_interval / num_packets;
-            time = ra::clampsd(raw, devExt->clamp.min, devExt->clamp.max);
-        }
-        else {
-            time = devExt->clamp.min;
+    if (num_packets > 0 && devExt->enable) {
+        bool has_relative_packet = false;
+        auto scan = InputDataStart;
+
+        do {
+            if (!(scan->Flags & MOUSE_MOVE_ABSOLUTE)) {
+                has_relative_packet = true;
+                break;
+            }
+        } while (++scan != InputDataEnd);
+
+        milliseconds time = devExt->clamp.min;
+        if (has_relative_packet) {
+            if (devExt->keep_time) {
+                counter_t now = KeQueryPerformanceCounter(NULL).QuadPart;
+                counter_t ticks = now - devExt->counter;
+                devExt->counter = now;
+                milliseconds raw = ticks * global.tick_interval / num_packets;
+                time = ra::clampsd(raw, devExt->clamp.min, devExt->clamp.max);
+            }
+            else {
+                time = devExt->clamp.min;
+            }
         }
 
         auto it = InputDataStart;
         do {
+            UpdateMouse1State(devExt, it->ButtonFlags);
+
+            if (it->Flags & MOUSE_MOVE_ABSOLUTE) {
+                continue;
+            }
+
             if (devExt->set_extra_info) {
                 union {
                     short input[2];
@@ -104,7 +153,11 @@ Arguments:
                 it->ExtraInformation = u.data;
             }
 
-            if (it->LastX || it->LastY) {
+            bool accel_active =
+                !devExt->accel_only_while_mouse1 ||
+                devExt->mouse1_held;
+
+            if (accel_active && (it->LastX || it->LastY)) {
                 vec2d input = {
                     static_cast<double>(it->LastX),
                     static_cast<double>(it->LastY)
@@ -373,6 +426,7 @@ DeviceSetup(WDFOBJECT hDevice)
     auto set_ext_from_cfg = [devExt](const ra::device_config& cfg) {
         devExt->enable = !cfg.disable;
         devExt->set_extra_info = cfg.set_extra_info;
+        devExt->accel_only_while_mouse1 = cfg.accel_only_while_mouse1;
         devExt->input_dpi_normalization_factor = (cfg.dpi > 0) ? (ra::NORMALIZED_DPI / cfg.dpi) : 1;
 
         bool rate_given = cfg.polling_rate > 0;
@@ -407,6 +461,10 @@ DeviceSetup(WDFOBJECT hDevice)
 
     if (!global.modifier_data) {
         devExt->enable = false;
+        devExt->accel_only_while_mouse1 = false;
+        devExt->mouse1_held = false;
+        devExt->carry.x = 0;
+        devExt->carry.y = 0;
         devExt->mod = {};
         return;
     }
@@ -429,6 +487,10 @@ DeviceSetup(WDFOBJECT hDevice)
             break;
         }
     }
+
+    devExt->mouse1_held = false;
+    devExt->carry.x = 0;
+    devExt->carry.y = 0;
 }
 
 VOID
