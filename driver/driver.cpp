@@ -1,3 +1,8 @@
+#include <math.h>
+// Keep rotation setup on the WDK kernel math implementation. MSVC can fuse
+// sin/cos into a user-CRT-only __libm_sse2_sincos_ helper under /fp:fast.
+#pragma function(sin, cos)
+
 #include "driver.h"
 
 #include <rawaccel.hpp>
