@@ -2,7 +2,8 @@ $ErrorActionPreference = 'Stop'
 $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
 $vs = & $vswhere -latest -products * -requires Microsoft.Component.MSBuild -property installationPath
 if (!$vs) { throw 'Visual Studio with MSBuild was not found.' }
-$msbuild = Join-Path $vs 'MSBuild\Current\Bin\MSBuild.exe'
+# The WDK NuGet package ships x64 host tools, including ApiValidator.
+$msbuild = Join-Path $vs 'MSBuild\Current\Bin\amd64\MSBuild.exe'
 & nuget restore ci\packages.config -PackagesDirectory packages -NonInteractive
 if ($LASTEXITCODE) { throw 'WDK/SDK restore failed.' }
 & nuget restore rawaccel.sln -NonInteractive
