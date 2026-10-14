@@ -17,7 +17,7 @@ public ref struct RawInputDevice {
 
 static int CompareByID(RawInputDevice^ x, RawInputDevice^ y)
 {
-    return String::Compare(x->id, y->id);
+    return StringComparer::OrdinalIgnoreCase->Compare(x->id, y->id);
 }
 
 public ref struct MultiHandleDevice {
@@ -52,8 +52,8 @@ public ref struct MultiHandleDevice {
             GCHandle gch = GCHandle::Alloc(del);
             auto fp = static_cast<void (*)(rawinput_device&)>(
                 Marshal::GetFunctionPointerForDelegate(del).ToPointer());
-            rawinput_foreach(fp);
-            gch.Free();
+            try { rawinput_foreach(fp); }
+            finally { gch.Free(); }
 
             auto ret = gcnew List<MultiHandleDevice^>();
             auto count = maker->devices->Count;
@@ -63,7 +63,7 @@ public ref struct MultiHandleDevice {
             if (count > 0) {
                 maker->devices->Sort(gcnew Comparison<RawInputDevice^>(&CompareByID));
                 while (++last != count) {
-                    if (!String::Equals(maker->devices[first]->id, maker->devices[last]->id)) {
+                    if (!String::Equals(maker->devices[first]->id, maker->devices[last]->id, StringComparison::OrdinalIgnoreCase)) {
                         auto range = maker->devices->GetRange(first, last - first);
                         ret->Add(gcnew MultiHandleDevice(range));
                         first = last;

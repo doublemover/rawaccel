@@ -12,6 +12,7 @@ namespace grapher.Models.Devices
     {
         public MultiHandleDevice device;
         public DeviceSettings oldSettings;
+        public DeviceSettings inheritedSettings;
         public DeviceConfig newConfig;
         public string newProfile;
         public bool overrideDefaultConfig;
@@ -20,7 +21,7 @@ namespace grapher.Models.Devices
         {
             return string.IsNullOrWhiteSpace(device.name) ?
                 device.id :
-                device.name;
+                device.name + " [" + device.id.Substring(device.id.LastIndexOf('\\') + 1) + "]";
         }
     }
 }

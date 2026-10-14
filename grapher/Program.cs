@@ -35,7 +35,11 @@ namespace grapher
         static void GlobalUnhandledExceptionHandler(object sender, UnhandledExceptionEventArgs e)
         {
             var ex = (Exception)e.ExceptionObject;
-            System.IO.File.WriteAllText("error.log", ex.ToString());
+            try
+            {
+                System.IO.File.WriteAllText(System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "error.log"), ex.ToString());
+            }
+            catch (Exception) { /* Reporting the original failure must not throw again. */ }
             MessageBox.Show(ex.Message, "Error");
         }
     }

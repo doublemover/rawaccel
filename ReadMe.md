@@ -2,7 +2,20 @@
 
 Raw Accel is a Windows 10 & Windows 11 x86-64 driver which allows for the acceleration of mouse input in the raw input stream. It started as a replacement for [InterAccel](https://github.com/KovaaK/InterAccel) and has been extended with more acceleration types, charts, and other features.
 
-## Anti-Cheat Friendly
+## This fork: per-device and per-button profiles
+
+This development branch adds an editable profile selector, individual mouse-instance
+settings, and held-button profile bindings for left, right, middle, X1, and X2.
+See [configuration and validation notes](doc/Fork-Validation.md) before building.
+Existing JSON files retain their previous behavior when the new bindings are absent.
+
+**This is source under development, not a signed production release.** It requires
+matching 1.8.0 user-mode applications and driver. The prebuilt files in `signed/`
+are older upstream artifacts and do not contain these changes. Do not mix them.
+This fork has not been validated by game anti-cheat vendors; upstream assurances
+do not establish compatibility for custom button-dependent acceleration.
+
+## Upstream signed releases
 
 [Releases](https://github.com/a1xd/rawaccel/releases/latest) of the Raw Accel driver are signed and run in system space. Raw Accel only modifies mouse input by a constant set of formulas, and adds a one-second delay when changing settings in order to mitigate its abuse.
 

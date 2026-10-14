@@ -2,7 +2,7 @@
 using System;
 using System.IO;
 using System.Windows.Forms;
-using System.Threading;
+using System.Threading.Tasks;
 using System.Text;
 using System.Drawing;
 using grapher.Models.Devices;
@@ -55,6 +55,8 @@ namespace grapher.Models.Serialized
             }
 
             UserConfigField = InitActiveAndGetUserConfig();
+            SelectedProfileName = UserConfigField.profiles[0].name;
+            RebuildGraphingAccel();
         }
 
         #endregion Constructors
@@ -92,19 +94,26 @@ namespace grapher.Models.Serialized
                     ActiveProfileNamesSet = new HashSet<string>(value.profiles.Select(p => p.name));
                 }
 
-                ActiveAccelForGraphingField = value.accels[0].CreateStatelessCopy();
+                RebuildGraphingAccel();
             }
         }
 
         public Profile ActiveProfile 
         {
-            get => ActiveConfigField.profiles[0];
-            private set => ActiveConfigField.SetProfileAt(0, value);
+            get => ActiveConfigField.profiles.Find(p => p.name == SelectedProfileName)
+                ?? UserConfigField?.profiles.Find(p => p.name == SelectedProfileName)
+                ?? ActiveConfigField.profiles[0];
         }
 
         public ManagedAccel ActiveAccel
         {
-            get => ActiveConfig.accels[0];
+            get
+            {
+                int index = ActiveConfig.profiles.FindIndex(p => p.name == SelectedProfileName);
+                if (index >= 0) return ActiveConfig.accels[index];
+                index = UserConfigField?.profiles.FindIndex(p => p.name == SelectedProfileName) ?? -1;
+                return index >= 0 ? UserConfig.accels[index] : ActiveConfig.accels[0];
+            }
         }
 
         /// <summary>
@@ -123,9 +132,16 @@ namespace grapher.Models.Serialized
 
         public Profile UserProfile 
         {
-            get => UserConfigField.profiles[0];
-            private set => UserConfigField.SetProfileAt(0, value);
+            get => UserConfigField.profiles.Find(p => p.name == SelectedProfileName) ?? UserConfigField.profiles[0];
+            private set => UserConfigField.SetProfileAt(UserConfigField.profiles.IndexOf(UserProfile), value);
         }
+
+        public string SelectedProfileName { get; private set; }
+
+        public bool IsApplying { get; private set; }
+
+        private readonly Dictionary<IntPtr, (DeviceConfig Config, string Profile, string[] Bindings)> InputConfigs =
+            new Dictionary<IntPtr, (DeviceConfig, string, string[])>();
 
         public HashSet<string> ActiveProfileNamesSet { get; private set; }
 
@@ -150,10 +166,78 @@ namespace grapher.Models.Serialized
 
         #region Methods
 
-        public void ResetDriver()
+        private static DriverConfig CloneConfig(DriverConfig source)
         {
-            ActiveConfig = DriverConfig.GetDefault();
-            new Thread(() => DriverConfig.Deactivate()).Start();
+            var converted = DriverConfig.Convert(source.ToJSON());
+            if (converted.Item2 != null) throw new ApplicationException(converted.Item2);
+            return converted.Item1;
+        }
+
+        private void RebuildGraphingAccel()
+        {
+            ActiveAccelForGraphingField?.Dispose();
+            ActiveAccelForGraphingField = ActiveAccel.CreateStatelessCopy();
+        }
+
+        public void SelectProfile(string name)
+        {
+            if (!UserConfig.profiles.Any(p => p.name == name)) throw new ArgumentException("Unknown profile", nameof(name));
+            SelectedProfileName = name;
+            RebuildGraphingAccel();
+            SetActiveHandles();
+        }
+
+        public string SaveEditedProfile(Profile profile)
+        {
+            profile.name = UserProfile.name;
+            var errors = DriverConfig.FromProfile(profile).Errors();
+            if (errors == null) UserProfile = profile;
+            return errors;
+        }
+
+        public void AddProfile(string name, bool duplicate)
+        {
+            if (UserConfig.profiles.Count >= 1024) throw new ApplicationException("At most 1024 profiles are supported.");
+            if (string.IsNullOrWhiteSpace(name) || name.Length >= 256 || name.IndexOf('\0') >= 0 ||
+                UserConfig.profiles.Any(p => p.name == name))
+                throw new ApplicationException("Choose a unique profile name of 1 to 255 characters.");
+            var profile = duplicate ? CloneConfig(DriverConfig.FromProfile(UserProfile)).profiles[0] : new Profile();
+            profile.name = name;
+            UserConfig.profiles.Add(profile);
+            UserConfig.accels.Add(new ManagedAccel(profile));
+            SelectProfile(name);
+        }
+
+        public string DeleteSelectedProfile()
+        {
+            string name = UserProfile.name;
+            if (UserConfig.profiles[0].name == name) return "The first (default) profile cannot be deleted.";
+            if (UserConfig.defaultDeviceConfig.ButtonProfiles.Contains(name) ||
+                UserConfig.devices.Any(d => d.profile == name || d.config.ButtonProfiles.Contains(name)))
+                return "This profile is assigned to a device or mouse button. Change those assignments first.";
+            int index = UserConfig.profiles.IndexOf(UserProfile);
+            UserConfig.accels[index].Dispose();
+            UserConfig.accels.RemoveAt(index);
+            UserConfig.profiles.RemoveAt(index);
+            SelectProfile(UserConfig.profiles[0].name);
+            return null;
+        }
+
+        public async Task<string> ResetDriverAsync()
+        {
+            if (IsApplying) return "A driver update is already in progress.";
+            IsApplying = true;
+            try
+            {
+                await Task.Run(() => DriverConfig.Deactivate());
+                ActiveConfig = DriverConfig.GetDefault();
+                SelectedProfileName = ActiveConfig.profiles[0].name;
+                RebuildGraphingAccel();
+                SetActiveHandles();
+                return null;
+            }
+            catch (Exception e) { return e.Message; }
+            finally { IsApplying = false; }
         }
 
         public void UpdateFieldsFromGUISettings()
@@ -165,35 +249,57 @@ namespace grapher.Models.Serialized
             AutoWriteMenuItem.Checked = GuiSettings.AutoWriteToDriverOnStartup;
         }
 
-        public bool TryActivate(Profile settings, out string errors)
+        public async Task<(bool Applied, string Error)> ApplyProfileAsync(Profile profile)
         {
-            var old = UserProfile;
-            UserProfile = settings;
-            bool success = TryActivate(UserConfig, out errors);
-            if (!success)
+            if (IsApplying) return (false, "A driver update is already in progress.");
+            IsApplying = true;
+            try
             {
-                UserProfile = old;
+                profile.name = UserProfile.name;
+                var snapshot = CloneConfig(UserConfig);
+                snapshot.SetProfileAt(snapshot.profiles.FindIndex(p => p.name == profile.name), profile);
+                string errors = snapshot.Errors();
+                if (errors != null) return (false, errors);
+                // Capture the immutable snapshot rather than a mutable ActiveConfig field.
+                await Task.Run(() => snapshot.Activate());
+                return (true, CommitAppliedConfig(snapshot));
             }
-            return success;
+            catch (Exception e) { return (false, e.Message); }
+            finally { IsApplying = false; }
         }
 
-        public bool TryActivate(DriverConfig settings, out string errors)
+        private string CommitAppliedConfig(DriverConfig snapshot)
         {
-            errors = settings.Errors();
-
-            if (errors == null)
+            UserConfig = CloneConfig(snapshot);
+            ActiveConfig = snapshot;
+            SetActiveHandles();
+            try
             {
                 GuiSettings = MakeGUISettingsFromFields();
                 GuiSettings.Save();
-
-                UserConfig = settings;
-                ActiveConfig = settings;
-                File.WriteAllText(Constants.DefaultSettingsFileName, settings.ToJSON());
-
-                new Thread(() => ActiveConfig.Activate()).Start();
+                SaveTextAtomically(Constants.DefaultSettingsFileName, snapshot.ToJSON());
+                return null;
             }
+            catch (Exception e)
+            {
+                return "The driver was updated, but settings could not be saved: " + e.Message;
+            }
+        }
 
-            return errors == null;
+        internal static void SaveTextAtomically(string path, string text)
+        {
+            string fullPath = Path.GetFullPath(path);
+            string temporary = fullPath + "." + Guid.NewGuid().ToString("N") + ".tmp";
+            try
+            {
+                File.WriteAllText(temporary, text);
+                if (File.Exists(fullPath)) File.Replace(temporary, fullPath, null);
+                else File.Move(temporary, fullPath);
+            }
+            finally
+            {
+                if (File.Exists(temporary)) File.Delete(temporary);
+            }
         }
 
         public void SetHiddenOptions(Profile settings)
@@ -221,37 +327,51 @@ namespace grapher.Models.Serialized
             };
         }
 
+        public static string LegacyDeviceId(string instanceId)
+        {
+            int separator = instanceId.LastIndexOf('\\');
+            return separator >= 0 ? instanceId.Substring(0, separator) : instanceId;
+        }
+
+        public static DeviceSettings FindDeviceSettings(DriverConfig config, string instanceId)
+        {
+            return config.devices.Find(d => string.Equals(d.id, instanceId, StringComparison.OrdinalIgnoreCase))
+                ?? config.devices.Find(d => string.Equals(d.id, LegacyDeviceId(instanceId), StringComparison.OrdinalIgnoreCase));
+        }
+
         public void SetActiveHandles()
         {
             ActiveNormTaggedHandles.Clear();
-
-            bool ActiveProfileIsFirst = ActiveProfile == ActiveConfig.profiles[0];
-
-            foreach (var sysDev in SystemDevices)
+            InputConfigs.Clear();
+            foreach (var device in SystemDevices)
             {
-                void AddHandlesFromSysDev(bool normalized)
+                var settings = FindDeviceSettings(ActiveConfig, device.id);
+                var config = settings?.config ?? ActiveConfig.defaultDeviceConfig;
+                string profile = settings?.profile;
+                if (string.IsNullOrEmpty(profile) || !ActiveProfileNamesSet.Contains(profile))
+                    profile = ActiveConfig.profiles[0].name;
+                foreach (var handle in device.handles)
                 {
-                    ActiveNormTaggedHandles.AddRange(sysDev.handles.Select(h => (h, normalized)));
-                }
-
-                var settings = ActiveConfig.devices.Find(d => d.id == sysDev.id);
-
-                if (settings is null)
-                {
-                    if (ActiveProfileIsFirst && !ActiveConfig.defaultDeviceConfig.disable)
-                    {
-                        AddHandlesFromSysDev(ActiveConfig.defaultDeviceConfig.dpi > 0);
-                    }
-                }
-                else if (!settings.config.disable &&
-                            ((ActiveProfileIsFirst &&
-                                    (string.IsNullOrEmpty(settings.profile) ||
-                                        !ActiveProfileNamesSet.Contains(settings.profile))) ||
-                                ActiveProfile.name == settings.profile))
-                {
-                    AddHandlesFromSysDev(settings.config.dpi > 0);
+                    InputConfigs[handle] = (config, profile, config.ButtonProfiles);
+                    if (!config.disable && profile == ActiveProfile.name)
+                        ActiveNormTaggedHandles.Add((handle, config.dpi > 0));
                 }
             }
+        }
+
+        public bool MatchesSelectedInputProfile(IntPtr handle, int heldButtons, out bool normalized)
+        {
+            normalized = false;
+            if (!InputConfigs.TryGetValue(handle, out var input) || input.Config.disable) return false;
+            normalized = input.Config.dpi > 0;
+            var bindings = input.Bindings;
+            for (int i = bindings.Length - 1; i >= 0; --i)
+            {
+                if ((heldButtons & (1 << i)) != 0 && !string.IsNullOrEmpty(bindings[i]))
+                    return bindings[i] == ActiveProfile.name && ActiveProfileNamesSet.Contains(bindings[i]);
+            }
+            return (!input.Config.accelOnlyWhileMouse1 || (heldButtons & 1) != 0) &&
+                input.Profile == ActiveProfile.name;
         }
 
         public void Submit(DeviceConfig newDefaultConfig, DeviceDialogItem[] items)
@@ -261,7 +381,7 @@ namespace grapher.Models.Serialized
             {
                 if (item.overrideDefaultConfig)
                 {
-                    if (item.oldSettings is null)
+                    if (item.oldSettings is null || !string.Equals(item.oldSettings.id, item.device.id, StringComparison.OrdinalIgnoreCase))
                     {
                         UserConfig.devices.Add(
                             new DeviceSettings
@@ -278,7 +398,7 @@ namespace grapher.Models.Serialized
                         item.oldSettings.profile = item.newProfile;
                     }
                 }
-                else if (!(item.oldSettings is null))
+                else if (!(item.oldSettings is null) && string.Equals(item.oldSettings.id, item.device.id, StringComparison.OrdinalIgnoreCase))
                 {
                     UserConfig.devices.Remove(item.oldSettings);
                 }
@@ -311,9 +431,15 @@ namespace grapher.Models.Serialized
                     {
                         if (GuiSettings.AutoWriteToDriverOnStartup)
                         {
-                            if (!TryActivate(cfg, out string _))
+                            try
                             {
-                                throw new Exception("deserialization succeeded but TryActivate failed");
+                                cfg.Activate();
+                                ActiveConfig = CloneConfig(cfg);
+                            }
+                            catch (Exception e)
+                            {
+                                ActiveConfig = DriverConfig.GetActive();
+                                MessageBox.Show("Startup settings could not be applied: " + e.Message, "Raw Accel");
                             }
                         }
                         else
@@ -323,16 +449,17 @@ namespace grapher.Models.Serialized
 
                         return cfg;
                     }
+                    MessageBox.Show("Saved settings are invalid and were left unchanged:\n" + err, "Raw Accel settings");
                 }
                 catch (JsonException e)
                 {
-                    System.Diagnostics.Debug.WriteLine($"bad settings: {e}");
+                    MessageBox.Show("Saved settings could not be read and were left unchanged:\n" + e.Message, "Raw Accel settings");
                 }
             }
 
             ActiveConfig = DriverConfig.GetActive();
-            File.WriteAllText(path, ActiveConfig.ToJSON());
-            return ActiveConfig;
+            if (!File.Exists(path)) SaveTextAtomically(path, ActiveConfig.ToJSON());
+            return CloneConfig(ActiveConfig);
         }
 
         private string GetSelectedTheme()

@@ -116,7 +116,9 @@ namespace rawaccel {
 				double idx_frac_lin_part = scalbn(x, -e) - 1;
 				double idx_f = range.num * (idx_int_log_part + idx_frac_lin_part);
 
-				unsigned idx = min(static_cast<int>(idx_f), range.size() - 2);
+				// Clamp before conversion; large speeds can exceed the integer range.
+				unsigned last_segment = static_cast<unsigned>(range.size() - 2);
+				unsigned idx = idx_f < last_segment ? static_cast<unsigned>(idx_f) : last_segment;
 
 				if (idx < capacity - 1) {
 					double y = lerp(data[idx], data[idx + 1], idx_f - idx);

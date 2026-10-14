@@ -1,6 +1,7 @@
 #pragma once
 
 #include "rawaccel.hpp"
+#include "input-pipeline.hpp"
 #include "rawaccel-io-def.h"
 
 #include <kbdmou.h>
@@ -19,19 +20,15 @@ using counter_t = long long;
 namespace ra = rawaccel;
 
 typedef struct _DEVICE_EXTENSION {
-    bool enable;
-    bool keep_time;
-    bool set_extra_info;
-    bool accel_only_while_mouse1;
-    bool mouse1_held;
-    double input_dpi_normalization_factor;
-    counter_t counter;
-    ra::time_clamp clamp;
-    ra::modifier mod;
-    vec2d carry;
+    KSPIN_LOCK state_lock;
+    ra::input_configuration config;
+    ra::input_state state;
+    unsigned long long configuration_generation;
+    unsigned long long input_epoch;
+    bool callback_busy;
+    bool in_collection;
     CONNECT_DATA UpperConnectData;
-    ra::modifier_settings mod_settings;
-    ra::speed_processor speed_processor;
+    WCHAR instance_id[ra::MAX_DEV_ID_LEN];
     WCHAR dev_id[ra::MAX_DEV_ID_LEN];
 } DEVICE_EXTENSION, *PDEVICE_EXTENSION;
 
@@ -45,10 +42,14 @@ EVT_WDF_DRIVER_DEVICE_ADD EvtDeviceAdd;
 EVT_WDF_IO_QUEUE_IO_INTERNAL_DEVICE_CONTROL EvtIoInternalDeviceControl;
 EVT_WDF_IO_QUEUE_IO_DEVICE_CONTROL RawaccelControl;
 EVT_WDF_OBJECT_CONTEXT_CLEANUP DeviceCleanup;
+EVT_WDF_DRIVER_UNLOAD DriverUnload;
+EVT_WDF_DEVICE_D0_ENTRY DeviceD0Entry;
+EVT_WDF_DEVICE_D0_EXIT DeviceD0Exit;
+EVT_WDF_REQUEST_COMPLETION_ROUTINE ConnectComplete;
 
 VOID DeviceSetup(WDFOBJECT);
 VOID WriteDelay(VOID);
-VOID RawaccelInit(WDFDRIVER);
+NTSTATUS RawaccelInit(WDFDRIVER);
 NTSTATUS CreateControlDevice(WDFDRIVER);
 
 EXTERN_C_END

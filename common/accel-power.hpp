@@ -147,6 +147,8 @@ namespace rawaccel {
 
 		double operator()(double speed, const accel_args& args) const
 		{
+			// The stationary axis in separate mode commonly has zero speed.
+			if (speed <= 0) return offset.y;
 			if (speed < cap.x) {
 				return base_fn(speed, args);
 			}

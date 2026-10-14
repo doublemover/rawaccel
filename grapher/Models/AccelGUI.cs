@@ -7,6 +7,8 @@ using grapher.Models.Serialized;
 using System;
 using System.Collections.Generic;
 using System.Drawing;
+using System.Linq;
+using System.Threading.Tasks;
 using System.Windows.Forms;
 using System.Windows.Forms.DataVisualization.Charting;
 
@@ -108,6 +110,11 @@ namespace grapher
 
         private void SaveGUISettingsOnClose(Object sender, FormClosingEventArgs e)
         {
+            if (Settings.IsApplying)
+            {
+                e.Cancel = true;
+                return;
+            }
             var guiSettings = Settings.MakeGUISettingsFromFields();
             if (!Settings.GuiSettings.Equals(guiSettings))
             {
@@ -117,7 +124,7 @@ namespace grapher
 
         public Profile MakeSettingsFromFields()
         {
-            var settings = new Profile();
+            var settings = new Profile { name = Settings.UserProfile.name };
 
             settings.rotation = ApplyOptions.Rotation.Field.Data;
             settings.outputDPI = Helper.CalculatOutputDPI(ApplyOptions.Sensitivity.Field.Data);
@@ -137,31 +144,30 @@ namespace grapher
             return settings;
         }
 
-        public void UpdateActiveSettingsFromFields()
+        public async Task UpdateActiveSettingsFromFieldsAsync()
         {
+            if (Settings.IsApplying) return;
             string error_message;
 
             try
             {
                 ButtonDelay(WriteButton);
 
-                if (!Settings.TryActivate(MakeSettingsFromFields(), out string errors))
-                {
-                    error_message = errors.ToString();
-                }
-                else
+                var result = await Settings.ApplyProfileAsync(MakeSettingsFromFields());
+                error_message = result.Error;
+                if (result.Applied)
                 {
                     RefreshActive();
-                    Settings.SetActiveHandles();
-                    return;
+                    RebuildProfileMenu();
                 }
+                if (error_message == null) return;
             }
-            catch (ApplicationException e)
+            catch (Exception e)
             {
                 error_message = e.Message;
             }
 
-            using (var form = new MessageDialog(error_message, "bad input"))
+            using (var form = new MessageDialog(error_message, "Raw Accel settings"))
             {
                 form.ShowDialog();
             }
@@ -231,28 +237,37 @@ namespace grapher
             UpdateGraph();
         }
 
-        private void OnWriteButtonClick(object sender, EventArgs e)
+        private async void OnWriteButtonClick(object sender, EventArgs e)
         {
-            UpdateActiveSettingsFromFields();
+            await UpdateActiveSettingsFromFieldsAsync();
         }
 
-        private void ResetDriverEventHandler(object sender, EventArgs e)
+        private async void ResetDriverEventHandler(object sender, EventArgs e)
         {
+            if (Settings.IsApplying) return;
             ButtonDelay(ResetButton);
-            Settings.ResetDriver();
-            RefreshActive();
+            string error = await Settings.ResetDriverAsync();
+            if (error != null) MessageBox.Show(error, "Could not reset Raw Accel");
+            else
+            {
+                RefreshActive();
+                RebuildProfileMenu();
+            }
         }
 
         private void OnButtonTimerTick(object sender, EventArgs e)
         {
+            if (Settings.IsApplying) return;
             ButtonTimer.Stop();
             SetButtonDefaults();
             DeviceMenuItem.Enabled = true;
+            if (ProfileMenu != null) ProfileMenu.Enabled = true;
         }
 
         private void StartButtonTimer()
         {
             DeviceMenuItem.Enabled = false;
+            if (ProfileMenu != null) ProfileMenu.Enabled = false;
             ButtonTimer.Interval = ButtonTimerInterval;
             ButtonTimer.Start();
         }
@@ -273,19 +288,100 @@ namespace grapher
 
         private void OnChartTimerTick(object sender, EventArgs e)
         {
-            AccelCharts.DrawLastMovement();
             MouseWatcher.UpdateLastMove();
+            AccelCharts.DrawLastMovement();
         }
 
-        private void DeviceMenuItemClick(object sender, EventArgs e)
+        private async void DeviceMenuItemClick(object sender, EventArgs e)
         {
             using (var devMenu = new DeviceMenuForm(Settings))
             {
                 if (devMenu.ShowDialog() == DialogResult.OK)
                 {
                     Settings.Submit(devMenu.defaultConfig, devMenu.Items);
-                    UpdateActiveSettingsFromFields();
+                    await UpdateActiveSettingsFromFieldsAsync();
                 }
+            }
+        }
+
+        private ToolStripMenuItem ProfileMenu;
+
+        public void AddProfileMenu(MenuStrip menu)
+        {
+            ProfileMenu = new ToolStripMenuItem("Profiles");
+            menu.Items.Add(ProfileMenu);
+            RebuildProfileMenu();
+        }
+
+        private bool SaveProfileDraft()
+        {
+            string error = Settings.SaveEditedProfile(MakeSettingsFromFields());
+            if (error == null) return true;
+            MessageBox.Show(error, "Fix this profile before switching");
+            return false;
+        }
+
+        private void RebuildProfileMenu()
+        {
+            if (ProfileMenu == null) return;
+            ProfileMenu.DropDownItems.Clear();
+            ProfileMenu.Text = "Profile: " + Settings.UserProfile.name;
+            foreach (var profile in Settings.UserConfig.profiles)
+            {
+                string name = profile.name;
+                var item = new ToolStripMenuItem(name) { Checked = name == Settings.UserProfile.name };
+                item.Click += (s, e) =>
+                {
+                    if (!SaveProfileDraft()) return;
+                    Settings.SelectProfile(name);
+                    RefreshUser();
+                    UpdateGraph();
+                    RebuildProfileMenu();
+                };
+                ProfileMenu.DropDownItems.Add(item);
+            }
+            ProfileMenu.DropDownItems.Add(new ToolStripSeparator());
+            ProfileMenu.DropDownItems.Add("New profile...", null, (s, e) => CreateProfile(false));
+            ProfileMenu.DropDownItems.Add("Duplicate current profile...", null, (s, e) => CreateProfile(true));
+            ProfileMenu.DropDownItems.Add("Delete current profile...", null, (s, e) =>
+            {
+                if (MessageBox.Show("Delete '" + Settings.UserProfile.name + "'? Apply to save this change.",
+                    "Delete profile", MessageBoxButtons.OKCancel) != DialogResult.OK) return;
+                string error = Settings.DeleteSelectedProfile();
+                if (error != null) MessageBox.Show(error, "Cannot delete profile");
+                else { RefreshUser(); UpdateGraph(); RebuildProfileMenu(); }
+            });
+            ProfileMenu.DropDownItems.Add(new ToolStripSeparator());
+            ProfileMenu.DropDownItems.Add(new ToolStripMenuItem("Apply saves all profiles and device bindings") { Enabled = false });
+        }
+
+        private void CreateProfile(bool duplicate)
+        {
+            if (!SaveProfileDraft()) return;
+            using (var dialog = new Form
+            {
+                Text = duplicate ? "Duplicate profile" : "New profile",
+                FormBorderStyle = FormBorderStyle.FixedDialog,
+                StartPosition = FormStartPosition.CenterParent,
+                MinimizeBox = false, MaximizeBox = false, ClientSize = new Size(420, 110)
+            })
+            {
+                var label = new Label { Text = "Profile name", AutoSize = true, Left = 12, Top = 12 };
+                var name = new TextBox { Left = 12, Top = 34, Width = 396, MaxLength = 255 };
+                var ok = new Button { Text = "Create", DialogResult = DialogResult.OK, Left = 246, Top = 72 };
+                var cancel = new Button { Text = "Cancel", DialogResult = DialogResult.Cancel, Left = 333, Top = 72 };
+                dialog.Controls.AddRange(new Control[] { label, name, ok, cancel });
+                dialog.AcceptButton = ok;
+                dialog.CancelButton = cancel;
+                if (dialog.ShowDialog(AccelForm) != DialogResult.OK) return;
+                try
+                {
+                    Settings.AddProfile(name.Text.Trim(), duplicate);
+                    RefreshUser();
+                    UpdateGraph();
+                    RebuildProfileMenu();
+                }
+                catch (ApplicationException e) { MessageBox.Show(e.Message, "Cannot create profile"); }
             }
         }
 

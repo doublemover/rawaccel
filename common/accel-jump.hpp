@@ -41,7 +41,10 @@ namespace rawaccel {
 
 		double smooth_antideriv(double x) const
 		{
-			return step.y * (x + log(1 + decay(x)) / smooth_rate);
+			// A stable logistic integral avoids exp overflow for narrow transitions.
+			double z = smooth_rate * (x - step.x);
+			double softplus = (z > 0 ? z : 0) + log(1 + exp(-fabs(z)));
+			return step.y * softplus / smooth_rate;
 		}
 
 	};
@@ -66,7 +69,7 @@ namespace rawaccel {
 
 		jump(const accel_args& args) :
 			jump_base(args),
-			C(-smooth_antideriv(0)) {}
+			C(is_smooth() ? -smooth_antideriv(0) : 0) {}
 
 		double operator()(double x, const accel_args&) const
 		{

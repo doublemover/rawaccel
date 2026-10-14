@@ -118,6 +118,7 @@
       <AdditionalIncludeDirectories>$(IntDir);$(WindowsSdkDir)Include\$(WindowsTargetPlatformVersion)\km;$(WindowsSdkDir)Include\$(WindowsTargetPlatformVersion)\shared;%(AdditionalIncludeDirectories);$(SolutionDir)\external;$(MSBuildThisFileDirectory)</AdditionalIncludeDirectories>
       <RuntimeLibrary>
       </RuntimeLibrary>
+      <OmitDefaultLibName>true</OmitDefaultLibName>
       <TreatWChar_tAsBuiltInType>true</TreatWChar_tAsBuiltInType>
       <CallingConvention>StdCall</CallingConvention>
       <AssemblerOutput>AssemblyCode</AssemblerOutput>
@@ -137,8 +138,7 @@
       <LinkTimeCodeGeneration>
       </LinkTimeCodeGeneration>
       <AdditionalLibraryDirectories>%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
-      <IgnoreAllDefaultLibraries>
-      </IgnoreAllDefaultLibraries>
+      <IgnoreAllDefaultLibraries>true</IgnoreAllDefaultLibraries>
       <AdditionalDependencies>%(AdditionalDependencies);$(KernelBufferOverflowLib);$(DDK_LIB_PATH)ntoskrnl.lib;$(DDK_LIB_PATH)hal.lib;$(DDK_LIB_PATH)wmilib.lib;$(KMDF_LIB_PATH)$(KMDF_VER_PATH)\WdfLdr.lib;$(KMDF_LIB_PATH)$(KMDF_VER_PATH)\WdfDriverEntry.lib;$(DDK_LIB_PATH)wdmsec.lib;$(DDK_LIB_PATH)libcntpr.lib</AdditionalDependencies>
     </Link>
     <ResourceCompile>
@@ -158,6 +158,7 @@
       <AdditionalIncludeDirectories>$(IntDir);$(WindowsSdkDir)Include\$(WindowsTargetPlatformVersion)\km;$(WindowsSdkDir)Include\$(WindowsTargetPlatformVersion)\shared;%(AdditionalIncludeDirectories);$(SolutionDir)\external;$(MSBuildThisFileDirectory)</AdditionalIncludeDirectories>
       <RuntimeLibrary>
       </RuntimeLibrary>
+      <OmitDefaultLibName>true</OmitDefaultLibName>
       <TreatWChar_tAsBuiltInType>true</TreatWChar_tAsBuiltInType>
       <CallingConvention>StdCall</CallingConvention>
       <AssemblerOutput>AssemblyCode</AssemblerOutput>
@@ -177,8 +178,7 @@
       <LinkTimeCodeGeneration>
       </LinkTimeCodeGeneration>
       <AdditionalLibraryDirectories>%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
-      <IgnoreAllDefaultLibraries>
-      </IgnoreAllDefaultLibraries>
+      <IgnoreAllDefaultLibraries>true</IgnoreAllDefaultLibraries>
       <AdditionalDependencies>%(AdditionalDependencies);$(KernelBufferOverflowLib);$(DDK_LIB_PATH)ntoskrnl.lib;$(DDK_LIB_PATH)hal.lib;$(DDK_LIB_PATH)wmilib.lib;$(KMDF_LIB_PATH)$(KMDF_VER_PATH)\WdfLdr.lib;$(KMDF_LIB_PATH)$(KMDF_VER_PATH)\WdfDriverEntry.lib;$(DDK_LIB_PATH)wdmsec.lib;$(DDK_LIB_PATH)libcntpr.lib</AdditionalDependencies>
     </Link>
     <ResourceCompile>
@@ -199,6 +199,7 @@
       <AdditionalIncludeDirectories>$(IntDir);$(WindowsSdkDir)Include\$(WindowsTargetPlatformVersion)\km;$(WindowsSdkDir)Include\$(WindowsTargetPlatformVersion)\shared;%(AdditionalIncludeDirectories);$(SolutionDir)\external;$(MSBuildThisFileDirectory)</AdditionalIncludeDirectories>
       <RuntimeLibrary>
       </RuntimeLibrary>
+      <OmitDefaultLibName>true</OmitDefaultLibName>
       <TreatWChar_tAsBuiltInType>true</TreatWChar_tAsBuiltInType>
       <FloatingPointModel>Fast</FloatingPointModel>
       <CallingConvention>StdCall</CallingConvention>
@@ -208,8 +209,7 @@
     </ClCompile>
     <Link>
       <AdditionalLibraryDirectories>%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
-      <IgnoreAllDefaultLibraries>
-      </IgnoreAllDefaultLibraries>
+      <IgnoreAllDefaultLibraries>true</IgnoreAllDefaultLibraries>
       <AdditionalDependencies>%(AdditionalDependencies);$(KernelBufferOverflowLib);$(DDK_LIB_PATH)ntoskrnl.lib;$(DDK_LIB_PATH)hal.lib;$(DDK_LIB_PATH)wmilib.lib;$(KMDF_LIB_PATH)$(KMDF_VER_PATH)\WdfLdr.lib;$(KMDF_LIB_PATH)$(KMDF_VER_PATH)\WdfDriverEntry.lib;$(DDK_LIB_PATH)wdmsec.lib;$(DDK_LIB_PATH)libcntpr.lib</AdditionalDependencies>
     </Link>
     <DriverSign>
@@ -230,6 +230,7 @@
       <AdditionalIncludeDirectories>$(IntDir);$(WindowsSdkDir)Include\$(WindowsTargetPlatformVersion)\km;$(WindowsSdkDir)Include\$(WindowsTargetPlatformVersion)\shared;%(AdditionalIncludeDirectories);$(SolutionDir)\external;$(MSBuildThisFileDirectory)</AdditionalIncludeDirectories>
       <RuntimeLibrary>
       </RuntimeLibrary>
+      <OmitDefaultLibName>true</OmitDefaultLibName>
       <TreatWChar_tAsBuiltInType>true</TreatWChar_tAsBuiltInType>
       <FloatingPointModel>Fast</FloatingPointModel>
       <CallingConvention>StdCall</CallingConvention>
@@ -239,8 +240,7 @@
     </ClCompile>
     <Link>
       <AdditionalLibraryDirectories>%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
-      <IgnoreAllDefaultLibraries>
-      </IgnoreAllDefaultLibraries>
+      <IgnoreAllDefaultLibraries>true</IgnoreAllDefaultLibraries>
       <AdditionalDependencies>%(AdditionalDependencies);$(KernelBufferOverflowLib);$(DDK_LIB_PATH)ntoskrnl.lib;$(DDK_LIB_PATH)hal.lib;$(DDK_LIB_PATH)wmilib.lib;$(KMDF_LIB_PATH)$(KMDF_VER_PATH)\WdfLdr.lib;$(KMDF_LIB_PATH)$(KMDF_VER_PATH)\WdfDriverEntry.lib;$(DDK_LIB_PATH)wdmsec.lib;$(DDK_LIB_PATH)libcntpr.lib</AdditionalDependencies>
     </Link>
     <DriverSign>
@@ -262,6 +262,7 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="driver.h" />
+    <ClInclude Include="input-pipeline.hpp" />
   </ItemGroup>
   <ItemGroup>
     <ResourceCompile Include="driver.rc" />

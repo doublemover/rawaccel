@@ -1,0 +1,13 @@
+<Project>
+  <!-- Optional reproducible WDK build, following Microsoft's driver-samples
+       NuGet workflow. Normal developer installations remain supported. -->
+  <PropertyGroup>
+    <RawAccelKitVersion>10.0.26100.6584</RawAccelKitVersion>
+    <RawAccelPackages>$(MSBuildThisFileDirectory)packages\</RawAccelPackages>
+  </PropertyGroup>
+  <ImportGroup Condition="'$(MSBuildProjectName)' == 'driver' and '$(Platform)' == 'x64'">
+    <Import Project="$(RawAccelPackages)Microsoft.Windows.WDK.x64.$(RawAccelKitVersion)\build\native\Microsoft.Windows.WDK.x64.props" Condition="Exists('$(RawAccelPackages)Microsoft.Windows.WDK.x64.$(RawAccelKitVersion)\build\native\Microsoft.Windows.WDK.x64.props')" />
+    <Import Project="$(RawAccelPackages)Microsoft.Windows.SDK.CPP.x64.$(RawAccelKitVersion)\build\native\Microsoft.Windows.SDK.cpp.x64.props" Condition="Exists('$(RawAccelPackages)Microsoft.Windows.SDK.CPP.x64.$(RawAccelKitVersion)\build\native\Microsoft.Windows.SDK.cpp.x64.props')" />
+    <Import Project="$(RawAccelPackages)Microsoft.Windows.SDK.CPP.$(RawAccelKitVersion)\build\native\Microsoft.Windows.SDK.cpp.props" Condition="Exists('$(RawAccelPackages)Microsoft.Windows.SDK.CPP.$(RawAccelKitVersion)\build\native\Microsoft.Windows.SDK.cpp.props')" />
+  </ImportGroup>
+</Project>

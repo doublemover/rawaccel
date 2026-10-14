@@ -20,9 +20,12 @@ namespace rawaccel {
 	};
 
 	class sys_error : public io_error {
+		DWORD code_;
 	public:
 		sys_error(const char* msg, DWORD code = GetLastError()) :
-			io_error(build_msg(code, msg)) {}
+			io_error(build_msg(code, msg)), code_(code) {}
+
+		DWORD code() const noexcept { return code_; }
 
 		static std::string build_msg(DWORD code, const char* msg) 
 		{

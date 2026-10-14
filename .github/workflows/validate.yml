@@ -1,0 +1,32 @@
+name: Validate driver and applications
+on:
+  push:
+    branches: ['hydro/**', 'mouse1-gated-1.7.1']
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  portable:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: bash tests/native/run_math_tests.sh
+      - run: bash tests/native/run_input_tests.sh
+      - run: bash tests/user-mode/run_tests.sh
+  windows:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build with WDK and run user-mode tests
+        shell: pwsh
+        run: ./ci/build-windows.ps1
+      - name: Save build and test diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-validation-diagnostics
+          path: |
+            windows-build.binlog
+            TestResults/*.trx
+          if-no-files-found: ignore
