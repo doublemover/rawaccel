@@ -258,6 +258,8 @@ namespace grapher
                 LutApplyActiveXLabel,
                 LutApplyActiveYLabel);
 
+            AccelGUI.AddProfileMenu(menuStrip1);
+
         }
 
         #endregion Constructor
@@ -341,10 +343,10 @@ namespace grapher
                     {
                         string targetPath = link.TargetPath;
 
-                        if (!(targetPath is null) && 
-                            (targetPath.EndsWith("rawaccel.exe") ||
-                                targetPath.EndsWith("writer.exe") &&
-                                    new FileInfo(targetPath).Directory.GetFiles("rawaccel.exe").Any()))
+                        if (!string.IsNullOrEmpty(targetPath) &&
+                            (string.Equals(Path.GetFileName(targetPath), "rawaccel.exe", StringComparison.OrdinalIgnoreCase) ||
+                                string.Equals(Path.GetFileName(targetPath), "writer.exe", StringComparison.OrdinalIgnoreCase) &&
+                                    File.Exists(Path.Combine(Path.GetDirectoryName(targetPath), "rawaccel.exe"))))
                         {
                             File.Delete(path);
                         }
@@ -361,7 +363,8 @@ namespace grapher
 
                 try
                 {
-                    if (!gui) lnk.Arguments = Constants.DefaultSettingsFileName;
+                    lnk.WorkingDirectory = Application.StartupPath;
+                    if (!gui) lnk.Arguments = "\"" + Path.Combine(Application.StartupPath, "settings.json") + "\"";
                     lnk.TargetPath = $@"{Application.StartupPath}\{name}.exe";
                     lnk.Save();
                 }

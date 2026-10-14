@@ -4,6 +4,7 @@
 #pragma comment(lib, "hid.lib")
 #pragma comment(lib, "User32.lib")
 
+#include <algorithm>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -37,12 +38,17 @@ void rawinput_foreach(Func fn, DWORD device_type = RIM_TYPEMOUSE)
         UINT elem_size = sizeof(RAWINPUTDEVICELIST);
         UINT num_devs = 0;
         
-        if (GetRawInputDeviceList(NULL, &num_devs, elem_size) == 0) {
+        // Hotplug may change the count between the two calls.
+        for (int attempt = 0; attempt < 4; ++attempt) {
+            if (GetRawInputDeviceList(NULL, &num_devs, elem_size) == RI_ERROR || num_devs == 0)
+                return {};
             auto dev_list = std::vector<RAWINPUTDEVICELIST>(num_devs);
-
-            if (GetRawInputDeviceList(&dev_list[0], &num_devs, elem_size) != RI_ERROR) {
+            UINT count = GetRawInputDeviceList(dev_list.data(), &num_devs, elem_size);
+            if (count != RI_ERROR) {
+                dev_list.resize(count);
                 return dev_list;
             }
+            if (GetLastError() != ERROR_INSUFFICIENT_BUFFER) break;
         }
 
         return {};
@@ -57,6 +63,7 @@ void rawinput_foreach(Func fn, DWORD device_type = RIM_TYPEMOUSE)
     for (auto [handle, dev_type] : get_dev_list()) {
         if (dev_type != device_type) continue;
 
+        dev = {};
         dev.handle = handle;
 
         // get interface name
@@ -65,6 +72,7 @@ void rawinput_foreach(Func fn, DWORD device_type = RIM_TYPEMOUSE)
             continue;
         }
 
+        if (name_len == 0) continue;
         interface_name.resize(name_len);
 
         if (GetRawInputDeviceInfoW(handle, RIDI_DEVICENAME, &interface_name[0], &name_len) == RI_ERROR) {
@@ -73,14 +81,14 @@ void rawinput_foreach(Func fn, DWORD device_type = RIM_TYPEMOUSE)
 
         // make name from vendor + product
         HANDLE hid_dev_object = CreateFileW(
-            &interface_name[0], 0, FILE_SHARE_READ, 0, OPEN_EXISTING, 0, 0);
+            &interface_name[0], 0, FILE_SHARE_READ | FILE_SHARE_WRITE, 0, OPEN_EXISTING, 0, 0);
 
         if (hid_dev_object != INVALID_HANDLE_VALUE) {
 
-            if (HidD_GetProductString(hid_dev_object, product_str_buf, HID_STR_MAX_LEN)) {
+            if (HidD_GetProductString(hid_dev_object, product_str_buf, sizeof(product_str_buf))) {
                 auto product_sv = std::wstring_view(product_str_buf);
 
-                if (HidD_GetManufacturerString(hid_dev_object, dev.name, HID_STR_MAX_LEN)) {
+                if (HidD_GetManufacturerString(hid_dev_object, dev.name, HID_STR_MAX_LEN * sizeof(WCHAR))) {
                     auto manufacturer_sv = std::wstring_view(dev.name);
 
                     if (starts_with(product_sv, manufacturer_sv)) {
@@ -112,17 +120,16 @@ void rawinput_foreach(Func fn, DWORD device_type = RIM_TYPEMOUSE)
             &prop_type, NULL, &id_size, 0);
 
         if (cm_res != CR_BUFFER_SMALL && cm_res != CR_SUCCESS) continue;
+        if (prop_type != DEVPROP_TYPE_STRING || id_size < sizeof(WCHAR) || id_size > sizeof(dev.id)) continue;
 
         cm_res = CM_Get_Device_Interface_PropertyW(&interface_name[0], &DEVPKEY_Device_InstanceId,
             &prop_type, reinterpret_cast<PBYTE>(&dev.id[0]), &id_size, 0);
 
-        if (cm_res != CR_SUCCESS) continue;
+        if (cm_res != CR_SUCCESS || prop_type != DEVPROP_TYPE_STRING ||
+            id_size > sizeof(dev.id) || id_size % sizeof(WCHAR) != 0 ||
+            id_size < sizeof(WCHAR) || dev.id[id_size / sizeof(WCHAR) - 1] != L'\0') continue;
 
-        // pop instance id
-        auto instance_delim_pos = std::wstring_view(dev.id).find_last_of(L'\\');
-        if (instance_delim_pos != std::string::npos) {
-            dev.id[instance_delim_pos] = L'\0';
-        }
+        // Keep the instance suffix so identical models can have independent settings.
 
         fn(dev);
     }

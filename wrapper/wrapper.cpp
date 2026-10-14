@@ -87,6 +87,7 @@ public value struct AccelArgs
     [JsonIgnore]
     int length;
 
+    [JsonProperty(Required = Required::Always)]
     [MarshalAs(UnmanagedType::ByValArray, SizeConst = ra::LUT_RAW_DATA_CAPACITY)]
     array<float>^ data;
 
@@ -94,6 +95,7 @@ public value struct AccelArgs
     void OnDeserializedMethod(StreamingContext context)
     {
         // data->Length must match SizeConst when marshalling
+        if (data == nullptr) throw gcnew JsonSerializationException("acceleration data must be an array");
         length = data->Length;
         array<float>::Resize(data, ra::LUT_RAW_DATA_CAPACITY);
     }
@@ -116,6 +118,7 @@ public value struct AccelArgs
         {
             case AccelMode::noaccel:
                 isEquivalent = true;
+                break;
             case AccelMode::synchronous:
                 isEquivalent =
                     syncSpeed == other.syncSpeed &&
@@ -142,8 +145,8 @@ public value struct AccelArgs
                     (capMode == CapMode::in_out ?
                         (cap.x == other.cap.x && cap.y == other.cap.y) :
                     capMode == CapMode::output ?
-                        (acceleration == other.scale && cap.y == other.cap.y) :
-                        (acceleration == other.scale && cap.x == other.cap.x));
+                        (scale == other.scale && cap.y == other.cap.y) :
+                        (scale == other.scale && cap.x == other.cap.x));
                 break;
             case AccelMode::natural:
                 isEquivalent =
@@ -166,11 +169,16 @@ public value struct AccelArgs
                     break;
                 }
 
+                if (length < 0 || data == nullptr || other.data == nullptr ||
+                    length > data->Length || length > other.data->Length)
+                {
+                    return false;
+                }
+
+                // length counts floats, not (speed, multiplier) pairs.
                 for (int i = 0; i < length; i++)
                 {
-                    int index = i * 2;
-                    if (data[index] != other.data[index] ||
-                        data[index+1] != other.data[index+1])
+                    if (data[i] != other.data[i])
                     {
                         isEquivalent = false;
                         break;
@@ -254,7 +262,7 @@ public ref struct Profile
 };
 
 [JsonObject(ItemRequired = Required::Always)]
-[StructLayout(LayoutKind::Sequential)]
+[StructLayout(LayoutKind::Sequential, CharSet = CharSet::Unicode)]
 public value struct DeviceConfig {
     [MarshalAs(UnmanagedType::U1)]
     bool disable;
@@ -276,7 +284,7 @@ public value struct DeviceConfig {
 
     [JsonProperty("Polling rate Hz (keep at 0 for automatic adjustment)")]
     int pollingRate;
-    
+
     [ComponentModel::DefaultValue(ra::DEFAULT_TIME_MIN)]
     [JsonProperty(Required = Required::Default)]
     double minimumTime;
@@ -284,6 +292,54 @@ public value struct DeviceConfig {
     [ComponentModel::DefaultValue(ra::DEFAULT_TIME_MAX)]
     [JsonProperty(Required = Required::Default)]
     double maximumTime;
+
+    [MarshalAs(UnmanagedType::ByValTStr, SizeConst = ra::MAX_NAME_LEN)]
+    [JsonProperty("Left button profile", Required = Required::Default)]
+    String^ buttonProfileLeft;
+
+    [MarshalAs(UnmanagedType::ByValTStr, SizeConst = ra::MAX_NAME_LEN)]
+    [JsonProperty("Right button profile", Required = Required::Default)]
+    String^ buttonProfileRight;
+
+    [MarshalAs(UnmanagedType::ByValTStr, SizeConst = ra::MAX_NAME_LEN)]
+    [JsonProperty("Middle button profile", Required = Required::Default)]
+    String^ buttonProfileMiddle;
+
+    [MarshalAs(UnmanagedType::ByValTStr, SizeConst = ra::MAX_NAME_LEN)]
+    [JsonProperty("X1 button profile", Required = Required::Default)]
+    String^ buttonProfileX1;
+
+    [MarshalAs(UnmanagedType::ByValTStr, SizeConst = ra::MAX_NAME_LEN)]
+    [JsonProperty("X2 button profile", Required = Required::Default)]
+    String^ buttonProfileX2;
+
+    [JsonIgnore]
+    property array<String^>^ ButtonProfiles
+    {
+        array<String^>^ get()
+        {
+            return gcnew array<String^> { buttonProfileLeft, buttonProfileRight,
+                buttonProfileMiddle, buttonProfileX1, buttonProfileX2 };
+        }
+    }
+
+    void SetButtonProfile(int index, String^ name)
+    {
+        switch (index) {
+        case 0: buttonProfileLeft = name; break;
+        case 1: buttonProfileRight = name; break;
+        case 2: buttonProfileMiddle = name; break;
+        case 3: buttonProfileX1 = name; break;
+        case 4: buttonProfileX2 = name; break;
+        default: throw gcnew ArgumentOutOfRangeException("index");
+        }
+    }
+
+    bool ShouldSerializebuttonProfileLeft() { return !String::IsNullOrEmpty(buttonProfileLeft); }
+    bool ShouldSerializebuttonProfileRight() { return !String::IsNullOrEmpty(buttonProfileRight); }
+    bool ShouldSerializebuttonProfileMiddle() { return !String::IsNullOrEmpty(buttonProfileMiddle); }
+    bool ShouldSerializebuttonProfileX1() { return !String::IsNullOrEmpty(buttonProfileX1); }
+    bool ShouldSerializebuttonProfileX2() { return !String::IsNullOrEmpty(buttonProfileX2); }
 
     bool ShouldSerializesetExtraInfo()
     {
@@ -305,7 +361,7 @@ public value struct DeviceConfig {
         return accelOnlyWhileMouse1 == true;
     }
 
-    void Init(const ra::device_config& cfg) 
+    void Init(const ra::device_config& cfg)
     {
         disable = cfg.disable;
         setExtraInfo = cfg.set_extra_info;
@@ -315,6 +371,7 @@ public value struct DeviceConfig {
         pollingRate = cfg.polling_rate;
         minimumTime = cfg.clamp.min;
         maximumTime = cfg.clamp.max;
+        for (int i = 0; i < 5; ++i) SetButtonProfile(i, gcnew String(cfg.button_profiles[i]));
     }
 };
 
@@ -375,26 +432,28 @@ public:
         GCHandle gch = GCHandle::Alloc(del);
         auto fp = static_cast<void (*)(const char*)>(
             Marshal::GetFunctionPointerForDelegate(del).ToPointer());
-        ra::profile* native_ptr = new ra::profile();
+        ra::profile native;
+        auto* native_ptr = &native;
+        try {
+            for each (auto prof in profiles) {
+                Marshal::StructureToPtr(prof, IntPtr(native_ptr), false);
+                auto [last_x, last_y, _] = ra::valid(*native_ptr, fp);
 
-        for each (auto prof in profiles) {
-            Marshal::StructureToPtr(prof, IntPtr(native_ptr), false);
-            auto [last_x, last_y, _] = ra::valid(*native_ptr, fp);
-
-            if (tmp->Count != 0) {
-                auto singleErrors = gcnew SingleProfileErrors();
-                singleErrors->messages = tmp->ToArray();
-                singleErrors->lastX = last_x;
-                singleErrors->lastY = last_y;
-                singleErrors->prof = prof;
-                list->Add(singleErrors);
-                tmp->Clear();
+                if (tmp->Count != 0) {
+                    auto singleErrors = gcnew SingleProfileErrors();
+                    singleErrors->messages = tmp->ToArray();
+                    singleErrors->lastX = last_x;
+                    singleErrors->lastY = last_y;
+                    singleErrors->prof = prof;
+                    list->Add(singleErrors);
+                    tmp->Clear();
+                }
             }
         }
-
-        tmp = nullptr;
-        gch.Free();
-        delete native_ptr;
+        finally {
+            tmp = nullptr;
+            gch.Free();
+        }
     }
 
     bool Empty()
@@ -465,24 +524,26 @@ public:
         GCHandle gch = GCHandle::Alloc(del);
         auto fp = static_cast<void (*)(const char*)>(
             Marshal::GetFunctionPointerForDelegate(del).ToPointer());
-        ra::device_settings* native_ptr = new ra::device_settings();
+        ra::device_settings native;
+        auto* native_ptr = &native;
+        try {
+            for each (auto dev in devSettings) {
+                Marshal::StructureToPtr(dev, IntPtr(native_ptr), false);
+                ra::valid(*native_ptr, fp);
 
-        for each (auto dev in devSettings) {
-            Marshal::StructureToPtr(dev, IntPtr(native_ptr), false);
-            ra::valid(*native_ptr, fp);
-
-            if (tmp->Count != 0) {
-                auto singleErrors = gcnew SingleDeviceErrors();
-                singleErrors->messages = tmp->ToArray();
-                singleErrors->settings = dev;
-                list->Add(singleErrors);
-                tmp->Clear();
+                if (tmp->Count != 0) {
+                    auto singleErrors = gcnew SingleDeviceErrors();
+                    singleErrors->messages = tmp->ToArray();
+                    singleErrors->settings = dev;
+                    list->Add(singleErrors);
+                    tmp->Clear();
+                }
             }
         }
-
-        tmp = nullptr;
-        gch.Free();
-        delete native_ptr;
+        finally {
+            tmp = nullptr;
+            gch.Free();
+        }
     }
 
     bool Empty()
@@ -517,9 +578,12 @@ struct accel_instance_t {
 
     accel_instance_t() = default;
 
-    accel_instance_t(ra::modifier_settings& args) :
-        settings(args),
-        mod(args) {}
+    accel_instance_t(ra::modifier_settings& args) : settings(args)
+    {
+        // READ returns source profiles, never trusted kernel-derived unions.
+        ra::init_data(settings);
+        mod = { settings };
+    }
 
     void init(Profile^ args)
     {
@@ -536,15 +600,18 @@ struct speed_calc_instance_t
 
 public ref class ManagedAccel
 {
-    accel_instance_t* const instance = new accel_instance_t();
-    speed_calc_instance_t* const speed_instance = new speed_calc_instance_t();
+    accel_instance_t* instance = new accel_instance_t();
+    speed_calc_instance_t* speed_instance = new speed_calc_instance_t();
 
 public:
 
     ManagedAccel() {}
 
-    ManagedAccel(ra::modifier_settings& settings) : 
-        instance(new accel_instance_t(settings)) {}
+    ManagedAccel(ra::modifier_settings& settings) :
+        instance(new accel_instance_t(settings))
+    {
+        speed_instance->speed_calculator.init(settings.prof.speed_processor_args);
+    }
 
     ManagedAccel(Profile^ settings)
     {
@@ -553,12 +620,15 @@ public:
 
     virtual ~ManagedAccel()
     {
-        delete instance;
+        this->!ManagedAccel();
     }
 
     !ManagedAccel()
     {
         delete instance;
+        instance = nullptr;
+        delete speed_instance;
+        speed_instance = nullptr;
     }
 
     /// <summary>
@@ -579,6 +649,7 @@ public:
 
     Tuple<double, double>^ Accelerate(int x, int y, double dpi_factor, double time)
     {
+        ThrowIfDisposed();
         vec2d in_out_vec = {
             (double)x,
             (double)y
@@ -593,11 +664,14 @@ public:
     {
         Profile^ get()
         {
+            ThrowIfDisposed();
             return gcnew Profile(instance->settings.prof);
         }
 
         void set(Profile^ val)
         {
+            ThrowIfDisposed();
+            if (val == nullptr) throw gcnew ArgumentNullException("val");
             instance->init(val);
             ra::speed_args speedArgs;
             Marshal::StructureToPtr(val->inputSpeedArgs, IntPtr(&speedArgs), false);
@@ -607,7 +681,14 @@ public:
 
     ra::modifier_settings NativeSettings()
     {
+        ThrowIfDisposed();
         return instance->settings;
+    }
+
+private:
+    void ThrowIfDisposed()
+    {
+        if (instance == nullptr) throw gcnew ObjectDisposedException("ManagedAccel");
     }
 };
 
@@ -627,35 +708,60 @@ public:
         speed_args->output_speed_smooth_halflife = output_speed_smooth_halflife;
     }
 
-    ra::speed_args* const speed_args = new ra::speed_args();
+    ~SpeedCalculatorArgs() { this->!SpeedCalculatorArgs(); }
+    !SpeedCalculatorArgs()
+    {
+        delete speed_args;
+        speed_args = nullptr;
+    }
+
+    ra::speed_args* speed_args = new ra::speed_args();
 };
 
 public ref class SpeedCalculator
 {
-    speed_calc_instance_t* const instance = new speed_calc_instance_t();
+    speed_calc_instance_t* instance = new speed_calc_instance_t();
 
 public:
     SpeedCalculator() {}
+    ~SpeedCalculator() { this->!SpeedCalculator(); }
+    !SpeedCalculator()
+    {
+        delete instance;
+        instance = nullptr;
+    }
 
     void Init(SpeedCalculatorArgs^ args)
     {
+        ThrowIfDisposed();
+        if (args == nullptr) throw gcnew ArgumentNullException("args");
+        if (args->speed_args == nullptr) throw gcnew ObjectDisposedException("SpeedCalculatorArgs");
         instance->speed_calculator.init(*args->speed_args);
     }
 
     double CalculateSpeed(double x, double y, double time)
     {
+        ThrowIfDisposed();
         vec2d in = { x ,y };
         return instance->speed_calculator.calc_speed_whole(in, time);
     }
 
     double SmoothScale(double scale, double time)
     {
+        ThrowIfDisposed();
         return instance->speed_calculator.smoother_x.scale_smoother.smooth(scale, time);
     }
 
     double SmoothOutput(double outputSpeed, double time)
     {
+        ThrowIfDisposed();
         return instance->speed_calculator.smoother_x.output_speed_smoother.smooth(outputSpeed, time);
+    }
+
+private:
+    void ThrowIfDisposed()
+    {
+        if (instance == nullptr) throw gcnew ObjectDisposedException("SpeedCalculator");
     }
 };
 
@@ -679,62 +785,41 @@ public:
 
     void Activate()
     {
-        if (accels->Count != profiles->Count) {
-            throw gcnew Exception("Profile count does not match ManagedAccel");
-        }
+        auto errors = Errors();
+        if (errors != nullptr) throw gcnew ArgumentException(errors);
+        if (accels == nullptr || accels->Count != profiles->Count)
+            throw gcnew InvalidOperationException("Profile count does not match ManagedAccel");
 
-        std::byte* buffer;
-
-        auto modifier_data_bytes = accels->Count * sizeof(ra::modifier_settings);
-        auto device_data_bytes = devices->Count * sizeof(ra::device_settings);
-
+        const auto modifier_data_bytes = size_t(profiles->Count) * sizeof(ra::modifier_settings);
+        const auto device_data_bytes = size_t(devices->Count) * sizeof(ra::device_settings);
+        const auto buffer_size = sizeof(ra::io_base) + modifier_data_bytes + device_data_bytes;
+        if (buffer_size > DWORD(-1)) throw gcnew ArgumentException("Configuration is too large");
         try {
-            buffer = new std::byte[sizeof(ra::io_base) + modifier_data_bytes + device_data_bytes];
+            auto buffer = std::make_unique<std::byte[]>(buffer_size);
+            auto* byte_ptr = buffer.get();
+            auto* base_data = reinterpret_cast<ra::io_base*>(byte_ptr);
+            Marshal::StructureToPtr(defaultDeviceConfig, IntPtr(&base_data->default_dev_cfg), false);
+            base_data->modifier_data_size = profiles->Count;
+            base_data->device_data_size = devices->Count;
+            byte_ptr += sizeof(ra::io_base);
+
+            auto* modifier_data = reinterpret_cast<ra::modifier_settings*>(byte_ptr);
+            for (int i = 0; i < profiles->Count; ++i) {
+                // Public profile fields may have changed since deserialization.
+                accels[i]->Settings = profiles[i];
+                modifier_data[i] = accels[i]->NativeSettings();
+            }
+            byte_ptr += modifier_data_bytes;
+            auto* device_data = reinterpret_cast<ra::device_settings*>(byte_ptr);
+            for (int i = 0; i < devices->Count; ++i)
+                Marshal::StructureToPtr(devices[i], IntPtr(&device_data[i]), false);
+            ra::write(buffer.get(), buffer_size);
         }
         catch (const std::exception& e) {
-            throw gcnew InteropException(e);
-        }
-
-        auto* byte_ptr = buffer;
-
-        auto* base_data = reinterpret_cast<ra::io_base*>(byte_ptr);
-        base_data->default_dev_cfg.disable = defaultDeviceConfig.disable;
-        base_data->default_dev_cfg.set_extra_info = defaultDeviceConfig.setExtraInfo;
-        base_data->default_dev_cfg.poll_time_lock = defaultDeviceConfig.pollTimeLock;
-        base_data->default_dev_cfg.accel_only_while_mouse1 = defaultDeviceConfig.accelOnlyWhileMouse1;
-        base_data->default_dev_cfg.dpi = defaultDeviceConfig.dpi;
-        base_data->default_dev_cfg.polling_rate = defaultDeviceConfig.pollingRate;
-        base_data->default_dev_cfg.clamp.min = defaultDeviceConfig.minimumTime;
-        base_data->default_dev_cfg.clamp.max = defaultDeviceConfig.maximumTime;
-        base_data->modifier_data_size = accels->Count;
-        base_data->device_data_size = devices->Count;
-
-        byte_ptr += sizeof(ra::io_base);
-
-        auto* modifier_data = reinterpret_cast<ra::modifier_settings*>(byte_ptr);
-        for (auto i = 0; i < accels->Count; i++) {
-            auto& mod_settings = modifier_data[i];
-            mod_settings = accels[i]->NativeSettings();
-        }
-
-        byte_ptr += modifier_data_bytes;
-
-        auto* device_data = reinterpret_cast<ra::device_settings*>(byte_ptr);
-        for (auto i = 0; i < devices->Count; i++) {
-            auto& dev_settings = device_data[i];
-            Marshal::StructureToPtr(devices[i], IntPtr(&dev_settings), false);
-        }
-
-        try {
-            ra::write(buffer);
-            delete[] buffer;
-        }
-        catch (const std::exception& e) {
-            delete[] buffer;
             throw gcnew InteropException(e);
         }
     }
-    
+
     void SetProfileAt(int index, Profile^ val)
     {
         profiles[index] = val;
@@ -745,6 +830,42 @@ public:
     String^ Errors()
     {
         Text::StringBuilder^ sb = gcnew Text::StringBuilder();
+        if (profiles == nullptr || devices == nullptr) return "profiles and devices must be arrays";
+        if (profiles->Count > 1024) return "configuration supports at most 1024 profiles";
+        if (devices->Count > 4096) return "configuration supports at most 4096 device overrides";
+        const auto bytes = sizeof(ra::io_base) + size_t(profiles->Count) * sizeof(ra::modifier_settings) +
+            size_t(devices->Count) * sizeof(ra::device_settings);
+        if (bytes > 16 * 1024 * 1024) return "configuration exceeds the 16 MiB driver limit";
+        auto names = gcnew HashSet<String^>(StringComparer::Ordinal);
+        for each (auto prof in profiles) {
+            if (prof == nullptr) return "profiles must not contain null entries";
+            if (String::IsNullOrEmpty(prof->name) || prof->name->Length >= ra::MAX_NAME_LEN ||
+                prof->name->IndexOf(L'\0') >= 0) return "profile names must contain 1 to 255 characters and no nulls";
+            if (!names->Add(prof->name)) return "profile names must be unique";
+            if (prof->argsX.data == nullptr || prof->argsY.data == nullptr ||
+                prof->argsX.data->Length != ra::LUT_RAW_DATA_CAPACITY ||
+                prof->argsY.data->Length != ra::LUT_RAW_DATA_CAPACITY)
+                return "acceleration data must use the fixed marshal capacity";
+        }
+        auto ids = gcnew HashSet<String^>(StringComparer::OrdinalIgnoreCase);
+        for each (auto dev in devices) {
+            if (dev == nullptr) return "devices must not contain null entries";
+            if (String::IsNullOrEmpty(dev->id) || dev->id->Length >= ra::MAX_DEV_ID_LEN ||
+                dev->id->IndexOf(L'\0') >= 0) return "device IDs must contain 1 to 199 characters and no nulls";
+            if (!ids->Add(dev->id)) return "device IDs must be unique";
+            if ((dev->name != nullptr && dev->name->Length >= ra::MAX_NAME_LEN) ||
+                (dev->profile != nullptr && dev->profile->Length >= ra::MAX_NAME_LEN))
+                return "device and profile names must be shorter than 256 characters";
+        }
+        auto configs = gcnew List<DeviceConfig>();
+        configs->Add(defaultDeviceConfig);
+        for each (auto dev in devices) configs->Add(dev->config);
+        for each (auto config in configs) {
+            for each (auto name in config.ButtonProfiles) {
+                if (!String::IsNullOrEmpty(name) && !names->Contains(name))
+                    sb->AppendFormat("button profile '{0}' does not exist\n", name);
+            }
+        }
 
         ProfileErrors^ profErrors = gcnew ProfileErrors(profiles);
         if (!profErrors->Empty()) {
@@ -754,14 +875,13 @@ public:
         DeviceSettings^ defaultDev = gcnew DeviceSettings();
         defaultDev->config = defaultDeviceConfig;
         defaultDev->id = "Default";
-        devices->Add(defaultDev);
+        auto devicesToValidate = gcnew List<DeviceSettings^>(devices);
+        devicesToValidate->Add(defaultDev);
 
-        DeviceErrors^ devErrors = gcnew DeviceErrors(devices);
+        DeviceErrors^ devErrors = gcnew DeviceErrors(devicesToValidate);
         if (!devErrors->Empty()) {
             sb->Append(devErrors->ToString());
         }
-
-        devices->RemoveAt(devices->Count - 1);
 
         if (sb->Length == 0) {
             return nullptr;
@@ -773,52 +893,29 @@ public:
 
     JObject^ ToJObject()
     {
-        auto dataQueue = gcnew Queue<array<float>^>();
-        auto empty = Array::Empty<float>();
-
-        for each (auto prof in profiles) {
-            if (prof->argsX.mode == AccelMode::lut) {
-                // data->Length is fixed for interop, 
-                // temporary resize avoids serializing a bunch of zeros
-                Array::Resize(prof->argsX.data, prof->argsX.length);
-            }
-            else {
-                // table data may be used internally in any mode, 
-                // so hide it when it's not needed for deserialization 
-                dataQueue->Enqueue(prof->argsX.data);
-                prof->argsX.data = empty;
-            }
-
-            if (prof->argsY.mode == AccelMode::lut) {
-                Array::Resize(prof->argsY.data, prof->argsY.length);
-            }
-            else {
-                dataQueue->Enqueue(prof->argsY.data);
-                prof->argsY.data = empty;
+        // Serialize first, then trim the JSON copy. Never resize live arrays:
+        // graphing and configuration writes may still be using them.
+        JObject^ jObject = JObject::FromObject(this);
+        auto jsonProfiles = safe_cast<JArray^>(jObject["profiles"]);
+        auto keys = gcnew array<String^> { "Whole or horizontal accel parameters", "Vertical accel parameters" };
+        for (int i = 0; i < profiles->Count; ++i) {
+            auto axes = gcnew array<AccelArgs> { profiles[i]->argsX, profiles[i]->argsY };
+            for (int axis = 0; axis < 2; ++axis) {
+                auto args = axes[axis];
+                auto values = gcnew JArray();
+                if (args.mode == AccelMode::lut) {
+                    if (args.data == nullptr || args.length < 0 || args.length > args.data->Length)
+                        throw gcnew JsonSerializationException("invalid lookup data length");
+                    for (int j = 0; j < args.length; ++j) values->Add(args.data[j]);
+                }
+                auto argsJson = safe_cast<JObject^>(jsonProfiles[i][keys[axis]]);
+                argsJson["data"] = values;
             }
         }
-
-        JObject^ jObject = JObject::FromObject(this);
         String^ capModes = String::Join(" | ", Enum::GetNames(CapMode::typeid));
         String^ accelModes = String::Join(" | ", Enum::GetNames(AccelMode::typeid));
         jObject->AddFirst(gcnew JProperty("### Cap modes ###", capModes));
         jObject->AddFirst(gcnew JProperty("### Accel modes ###", accelModes));
-
-        for each (auto prof in profiles) {
-            if (prof->argsX.mode == AccelMode::lut) {
-                Array::Resize(prof->argsX.data, ra::LUT_RAW_DATA_CAPACITY);
-            }
-            else {
-                prof->argsX.data = dataQueue->Dequeue();
-            }
-
-            if (prof->argsY.mode == AccelMode::lut) {
-                Array::Resize(prof->argsY.data, ra::LUT_RAW_DATA_CAPACITY);
-            }
-            else {
-                prof->argsY.data = dataQueue->Dequeue();
-            }
-        }
 
         return jObject;
     }
@@ -835,7 +932,9 @@ public:
         jss->DefaultValueHandling = DefaultValueHandling::Populate;
         auto cfg = JsonConvert::DeserializeObject<DriverConfig^>(json, jss);
         if (cfg == nullptr) throw gcnew JsonException("invalid JSON");
+        cfg->version = RA_VER_STRING;
 
+        if (cfg->profiles != nullptr && cfg->profiles->Count == 0) cfg->profiles->Add(gcnew Profile());
         auto message = cfg->Errors();
         if (message != nullptr) {
             return gcnew Tuple<DriverConfig^, String^>(nullptr, message);
@@ -862,7 +961,7 @@ public:
         }
         catch (const std::exception& e) {
             throw gcnew InteropException(e);
-        } 
+        }
 
         auto cfg = gcnew DriverConfig();
         cfg->profiles = gcnew List<Profile^>();
@@ -911,7 +1010,7 @@ public:
         return FromProfile(gcnew Profile());
     }
 
-    static void Deactivate() 
+    static void Deactivate()
     {
         try {
             ra::reset();
@@ -921,7 +1020,7 @@ public:
         }
     }
 
-private: 
+private:
     DriverConfig() {}
 };
 

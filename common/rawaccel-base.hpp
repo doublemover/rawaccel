@@ -1,6 +1,7 @@
 #pragma once
 
 #include "math-vec2.hpp"
+#include <stddef.h>
 
 namespace rawaccel {
     using milliseconds = double;
@@ -15,6 +16,7 @@ namespace rawaccel {
 
     inline constexpr size_t MAX_DEV_ID_LEN = 200;
     inline constexpr size_t MAX_NAME_LEN = 256;
+    inline constexpr size_t MOUSE_BUTTON_COUNT = 5;
 
     inline constexpr size_t LUT_RAW_DATA_CAPACITY = 514;
     inline constexpr size_t LUT_POINTS_CAPACITY = LUT_RAW_DATA_CAPACITY / 2;
@@ -59,7 +61,7 @@ namespace rawaccel {
         double smooth = 0.5;
 
         vec2d cap = { 15, 1.5 };
-        cap_mode cap_mode = cap_mode::out;
+        rawaccel::cap_mode cap_mode = rawaccel::cap_mode::out;
 
         int length = 0;
         mutable float data[LUT_RAW_DATA_CAPACITY] = {};

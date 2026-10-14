@@ -666,8 +666,8 @@ namespace grapher.Models.Mouse
             Header = 0x10000005
         }
 
-        [DllImport("user32.dll")]
-        public static extern bool RegisterRawInputDevices([MarshalAs(UnmanagedType.LPArray, SizeParamIndex=0)] RAWINPUTDEVICE[] pRawInputDevices, int uiNumDevices, int cbSize);
+        [DllImport("user32.dll", SetLastError = true)]
+        public static extern bool RegisterRawInputDevices([MarshalAs(UnmanagedType.LPArray, SizeParamIndex=1)] RAWINPUTDEVICE[] pRawInputDevices, int uiNumDevices, int cbSize);
 
         /// <summary>
         /// Function to retrieve raw input data.
@@ -678,7 +678,7 @@ namespace grapher.Models.Mouse
         /// <param name="pcbSize">Number of bytes in the array.</param>
         /// <param name="cbSizeHeader">Size of the header.</param>
         /// <returns>0 if successful if pData is null, otherwise number of bytes if pData is not null.</returns>
-        [DllImport("user32.dll")]
+        [DllImport("user32.dll", SetLastError = true)]
         public static extern int GetRawInputData(IntPtr hRawInput, RawInputCommand uiCommand, out RawInput pData, ref int pcbSize, int cbSizeHeader);
 
         #endregion External
@@ -704,7 +704,9 @@ namespace grapher.Models.Mouse
 
             RAWINPUTDEVICE[] devices = new RAWINPUTDEVICE[1];
             devices[0] = device;
-            RegisterRawInputDevices(devices, 1, Marshal.SizeOf(typeof(RAWINPUTDEVICE)));
+            if (!RegisterRawInputDevices(devices, 1, Marshal.SizeOf(typeof(RAWINPUTDEVICE))))
+                throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error(), "Raw mouse input registration failed");
+            SettingsManager.DeviceChange += (s, e) => { HeldButtons.Clear(); LastMoveTimes.Clear(); };
             Stopwatch = new Stopwatch();
             Stopwatch.Start();
         }
@@ -729,6 +731,12 @@ namespace grapher.Models.Mouse
 
         private bool LastMoveNormalized { get; set; }
 
+        private (double X, double Y, double Time, Profile Profile) PendingPoint;
+        private bool HasPendingPoint;
+
+        private readonly Dictionary<IntPtr, int> HeldButtons = new Dictionary<IntPtr, int>();
+        private readonly Dictionary<IntPtr, double> LastMoveTimes = new Dictionary<IntPtr, double>();
+
         private double PollTime
         {
             get => 1000 / SettingsManager.PollRateField.Data;
@@ -740,6 +748,12 @@ namespace grapher.Models.Mouse
 
         public void UpdateLastMove()
         {
+            if (HasPendingPoint)
+            {
+                HasPendingPoint = false;
+                if (ReferenceEquals(PendingPoint.Profile, SettingsManager.ActiveProfile))
+                    AccelCharts.MakeDots(PendingPoint.X, PendingPoint.Y, PendingPoint.Time);
+            }
             MouseData.Get(out var x, out var y);
             Display.Text = string.Format(LastMoveDisplayFormat, x, y);
         }
@@ -748,33 +762,33 @@ namespace grapher.Models.Mouse
         {
             RawInput rawInput;
             int size = Marshal.SizeOf(typeof(RawInput));
-            _ = GetRawInputData(message.LParam, RawInputCommand.Input, out rawInput, ref size, Marshal.SizeOf(typeof(RAWINPUTHEADER)));
-
+            int bytesRead = GetRawInputData(message.LParam, RawInputCommand.Input, out rawInput, ref size, Marshal.SizeOf(typeof(RAWINPUTHEADER)));
+            if (bytesRead < Marshal.SizeOf(typeof(RAWINPUTHEADER)) + Marshal.SizeOf(typeof(RawMouse)) ||
+                rawInput.Header.Type != RawInputType.Mouse) return;
             bool relative = !rawInput.Data.Mouse.Flags.HasFlag(RawMouseFlags.MoveAbsolute);
-
-            bool deviceMatch = false;
-            foreach (var (handle, normalized) in SettingsManager.ActiveNormTaggedHandles)
+            IntPtr handle = rawInput.Header.Device;
+            HeldButtons.TryGetValue(handle, out int held);
+            int flags = (int)rawInput.Data.Mouse._Data.ButtonFlags;
+            for (int button = 0; button < 5; ++button)
             {
-                if (handle == rawInput.Header.Device)
-                {
-                    deviceMatch = true;
-
-                    if (normalized != LastMoveNormalized)
-                    {
-                        LastMoveDisplayFormat = normalized ?
-                                                Constants.MouseMoveNormalizedFormat :
-                                                Constants.MouseMoveDefaultFormat;
-                        LastMoveNormalized = normalized;
-                    }
-
-                    break;
-                }
+                if ((flags & (1 << (button * 2))) != 0) held |= 1 << button;
+                if ((flags & (2 << (button * 2))) != 0) held &= ~(1 << button);
+            }
+            HeldButtons[handle] = held;
+            bool deviceMatch = SettingsManager.MatchesSelectedInputProfile(handle, held, out bool normalized);
+            if (deviceMatch && normalized != LastMoveNormalized)
+            {
+                LastMoveDisplayFormat = normalized ? Constants.MouseMoveNormalizedFormat : Constants.MouseMoveDefaultFormat;
+                LastMoveNormalized = normalized;
             }
 
-            if (relative && deviceMatch && (rawInput.Data.Mouse.LastX != 0 || rawInput.Data.Mouse.LastY != 0))
+            bool moved = relative && (rawInput.Data.Mouse.LastX != 0 || rawInput.Data.Mouse.LastY != 0);
+            double now = Stopwatch.Elapsed.TotalMilliseconds;
+            LastMoveTimes.TryGetValue(handle, out double previous);
+            var time = previous == 0 ? 100 : now - previous;
+            if (moved) LastMoveTimes[handle] = now;
+            if (moved && deviceMatch)
             {
-                var time = Stopwatch.Elapsed.TotalMilliseconds;
-                Stopwatch.Restart();
                 time = time > 100 ? 100 : time;
                 time = time > (PollTime * 0.8) ? time : (PollTime * 0.8);
 
@@ -800,7 +814,10 @@ namespace grapher.Models.Mouse
                 }
 
                 MouseData.Set(rawInput.Data.Mouse.LastX, rawInput.Data.Mouse.LastY);
-                AccelCharts.MakeDots(x, y, time);
+                // The chart only renders on its UI timer. Avoid thousands of
+                // redundant inverse-curve lookups for high-polling-rate mice.
+                PendingPoint = (x, y, time, SettingsManager.ActiveProfile);
+                HasPendingPoint = true;
             }
 
         }

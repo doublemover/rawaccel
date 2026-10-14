@@ -11,7 +11,7 @@ namespace writer
 
     class Program
     {
-        static readonly string DefaultPath = "settings.json";
+        static readonly string DefaultPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "settings.json");
         static readonly string Usage = 
             $"Usage: {AppDomain.CurrentDomain.FriendlyName} <settings file path>\n";
 

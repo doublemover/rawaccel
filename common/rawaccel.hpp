@@ -1,6 +1,7 @@
 #pragma once
 
 #include "accel-union.hpp"
+#include <stddef.h>
 
 namespace rawaccel {
 
@@ -17,7 +18,14 @@ namespace rawaccel {
         int dpi = 0;
         int polling_rate = 0;
         time_clamp clamp;
+        // Left, right, middle, X1 and X2; empty entries keep the base profile.
+        wchar_t button_profiles[MOUSE_BUTTON_COUNT][MAX_NAME_LEN] = {};
     };
+
+    static_assert(sizeof(wchar_t) != 2 || offsetof(device_config, button_profiles) == 32,
+                  "device_config wire layout changed");
+    static_assert(sizeof(wchar_t) != 2 || sizeof(device_config) == 2592,
+                  "device_config wire size changed");
 
     struct device_settings {
         wchar_t name[MAX_NAME_LEN] = {};
@@ -64,9 +72,13 @@ namespace rawaccel {
 
         double windowCoefficient = 0;
         double cutoffCoefficient = 0;
+        milliseconds cached_time = -1;
+        double timeAdjustedWindowCoefficient = 0;
+        double timeAdjustedCutoffCoefficient = 0;
 
         void init(const double halfLife)
         {
+            cached_time = -1;
             windowTotal = 0;
             cutoffTotal = 0;
 
@@ -79,9 +91,12 @@ namespace rawaccel {
 
         double smooth(const double speed, const milliseconds time)
         {
-            // compute coefficients
-            double timeAdjustedWindowCoefficient = 1 - pow(windowCoefficient, time);
-            double timeAdjustedCutoffCoefficient = 1 - pow(cutoffCoefficient, time);
+            // Fixed polling intervals reuse exactly the same decay coefficients.
+            if (time != cached_time) {
+                timeAdjustedWindowCoefficient = 1 - pow(windowCoefficient, time);
+                timeAdjustedCutoffCoefficient = 1 - pow(cutoffCoefficient, time);
+                cached_time = time;
+            }
 
             // adjust total based on coefficient and difference between new value and total
             windowTotal += timeAdjustedWindowCoefficient * (speed - windowTotal);
@@ -105,9 +120,15 @@ namespace rawaccel {
         double windowTrendCoefficient = 0;
         double cutoffTrendCoefficient = 0;
         bool is_init = false;
+        milliseconds cached_time = -1;
+        double timeAdjustedWindowCoefficient = 0;
+        double timeAdjustedCutoffCoefficient = 0;
+        double timeAdjustedWindowTrendCoefficient = 0;
+        double timeAdjustedCutoffTrendCoefficient = 0;
 
         void init(const double halfLife, const double trendHalfLife)
         {
+            cached_time = -1;
             windowTotal = 0;
             cutoffTotal = 0;
             windowTrendTotal = 0;
@@ -126,12 +147,14 @@ namespace rawaccel {
 
         double smooth(const double speed, const milliseconds time)
         {
-            // compute coefficients
-            double timeAdjustedWindowCoefficient = 1 - pow(windowCoefficient, time);
-            double timeAdjustedCutoffCoefficient = 1 - pow(cutoffCoefficient, time);
-
-            double timeAdjustedWindowTrendCoefficient = 1 - pow(windowTrendCoefficient, time);
-            double timeAdjustedCutoffTrendCoefficient = 1 - pow(cutoffTrendCoefficient, time);
+            // Cache only exact repeats; jittered timestamps keep their original math.
+            if (time != cached_time) {
+                timeAdjustedWindowCoefficient = 1 - pow(windowCoefficient, time);
+                timeAdjustedCutoffCoefficient = 1 - pow(cutoffCoefficient, time);
+                timeAdjustedWindowTrendCoefficient = 1 - pow(windowTrendCoefficient, time);
+                timeAdjustedCutoffTrendCoefficient = 1 - pow(cutoffTrendCoefficient, time);
+                cached_time = time;
+            }
 
             // save old totals for trend adjustment
             double oldWindowTotal = windowTotal;
@@ -317,6 +340,9 @@ namespace rawaccel {
             auto& data = settings.data;
             auto& flags = settings.data.flags;
 
+            // Zero packets have no direction and must not divide by speed below.
+            if (in.x == 0 && in.y == 0) return;
+
             double reference_angle = 0;
             double ips_factor = dpi_factor / time;
 
@@ -374,8 +400,11 @@ namespace rawaccel {
 
                 if (speed_processor.speed_flags.should_smooth_output)
                 {
-                    in.x = _copysign(speed_processor.smoother_x.output_speed_smoother.smooth(fabs(in.x), time), in.x);
-                    in.y = _copysign(speed_processor.smoother_y.output_speed_smoother.smooth(fabs(in.y), time), in.y);
+                    double smoothed_x = speed_processor.smoother_x.output_speed_smoother.smooth(fabs(in.x), time);
+                    double smoothed_y = speed_processor.smoother_y.output_speed_smoother.smooth(fabs(in.y), time);
+                    // A zero component has no sign. Keep it zero while decaying its history.
+                    if (in.x != 0) in.x = _copysign(smoothed_x, in.x);
+                    if (in.y != 0) in.y = _copysign(smoothed_y, in.y);
                 }
             }
             else {

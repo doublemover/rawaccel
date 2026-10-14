@@ -1,9 +1,19 @@
 #pragma once
 
-#include "rawaccel-base.hpp"
+#include "rawaccel.hpp"
 #include "utility.hpp"
 
 namespace rawaccel {
+
+	template <size_t N>
+	bool terminated(const wchar_t (&text)[N])
+	{
+		for (size_t i = 0; i < N; ++i) {
+			if (text[i] == L'\0') return true;
+		}
+		return false;
+	}
+
 
 	struct valid_profile_ret_t {
 		int last_x = 0;
@@ -38,15 +48,50 @@ namespace rawaccel {
 		auto check_accel = [&error](const accel_args& args) {
 			static_assert(LUT_POINTS_CAPACITY == 257, "update error msg");
 
+			const double values[] = {
+				args.input_offset, args.output_offset, args.acceleration, args.decay_rate,
+				args.gamma, args.motivity, args.exponent_classic, args.scale,
+				args.exponent_power, args.limit, args.sync_speed, args.smooth,
+				args.cap.x, args.cap.y
+			};
+			for (double value : values) {
+				if (infnan(value)) {
+					error("acceleration parameters must be finite");
+					break;
+				}
+			}
+			if (args.mode < accel_mode::classic || args.mode > accel_mode::noaccel) {
+				error("invalid acceleration mode");
+			}
+			if (args.cap_mode < cap_mode::io || args.cap_mode > cap_mode::out) {
+				error("invalid cap mode");
+			}
+			if (args.length < 0) error("data size can not be negative");
+
 			if (args.mode == accel_mode::lookup) {
 				if (args.length < 4) {
 					error("lookup mode requires at least 2 points");
 				}
-				else if (args.length > ra::LUT_RAW_DATA_CAPACITY) {
+				else if (args.length > static_cast<int>(LUT_RAW_DATA_CAPACITY)) {
 					error("too many data points (max=257)");
 				}
+				else if ((args.length % 2) != 0) {
+					error("lookup data must contain complete x/y pairs");
+				}
+				else {
+					double previous_x = 0;
+					for (int i = 0; i < args.length; i += 2) {
+						double x = args.data[i];
+						double y = args.data[i + 1];
+						if (infnan(x) || infnan(y) || x <= previous_x || y <= 0) {
+							error("lookup points must be finite and positive with strictly increasing x values");
+							break;
+						}
+						previous_x = x;
+					}
+				}
 			}
-			else if (args.length > ra::LUT_RAW_DATA_CAPACITY) {
+			else if (args.length > static_cast<int>(LUT_RAW_DATA_CAPACITY)) {
 				error("data size > max");
 			}
 
@@ -86,6 +131,11 @@ namespace rawaccel {
 					args.cap.y < args.output_offset &&
 					args.cap_mode != cap_mode::in)) {
 				error("cap < offset");
+			}
+
+			if (args.mode == accel_mode::classic && args.cap_mode == cap_mode::io &&
+				args.cap.x == args.input_offset) {
+				error("classic input/output cap must be greater than input offset");
 			}
 
 			if (args.acceleration <= 0) {
@@ -132,10 +182,30 @@ namespace rawaccel {
 
 		check_accel(args.accel_x);
 
-		if (!args.speed_processor_args.whole) {
-			ret.last_x = ret.count;
-			check_accel(args.accel_y);
-			ret.last_y = ret.count;
+		// Both derived curves are initialized, even when only X is active.
+		ret.last_x = ret.count;
+		check_accel(args.accel_y);
+		ret.last_y = ret.count;
+
+		const double values[] = {
+			args.domain_weights.x, args.domain_weights.y, args.range_weights.x, args.range_weights.y,
+			args.output_dpi, args.yx_output_dpi_ratio, args.lr_output_dpi_ratio, args.ud_output_dpi_ratio,
+			args.degrees_rotation, args.degrees_snap, args.speed_min, args.speed_max,
+			args.speed_processor_args.lp_norm, args.speed_processor_args.input_speed_smooth_halflife,
+			args.speed_processor_args.scale_smooth_halflife, args.speed_processor_args.output_speed_smooth_halflife
+		};
+		for (double value : values) {
+			if (infnan(value)) {
+				error("profile parameters must be finite");
+				break;
+			}
+		}
+		if (!terminated(args.name)) error("profile name must be terminated");
+		if (args.speed_min < 0) error("minimum speed can not be negative");
+		if (args.speed_processor_args.input_speed_smooth_halflife < 0 ||
+			args.speed_processor_args.scale_smooth_halflife < 0 ||
+			args.speed_processor_args.output_speed_smooth_halflife < 0) {
+			error("smoothing half-lives can not be negative");
 		}
 
 		if (args.name[0] == L'\0') {
@@ -182,7 +252,7 @@ namespace rawaccel {
 	}
 
 	template <typename MsgHandler = noop>
-	valid_device_ret_t valid(const device_settings& args, MsgHandler fn = {})
+	valid_device_ret_t valid(const device_config& args, MsgHandler fn = {})
 	{
 		valid_device_ret_t ret;
 
@@ -192,22 +262,41 @@ namespace rawaccel {
 		};
 
 
-		if (args.config.dpi < 0) {
+		if (infnan(args.clamp.min) || infnan(args.clamp.max)) {
+			error("time bounds must be finite");
+		}
+		for (const auto& name : args.button_profiles) {
+			if (!terminated(name)) error("button profile name must be terminated");
+		}
+
+		if (args.dpi < 0) {
 			error("dpi"" can not be negative");
 		}
 
-		if (args.config.polling_rate < 0) {
+		if (args.polling_rate < 0) {
 			error("polling rate"" can not be negative");
 		}
 
-		if (args.config.clamp.min <= 0) {
+		if (args.clamp.min <= 0) {
 			error("minimum time"" must be positive");
 		}
 
-		if (args.config.clamp.max < args.config.clamp.min) {
+		if (args.clamp.max < args.clamp.min) {
 			error("max time is less than min time");
 		}
 
 		return ret;
 	}
+
+	template <typename MsgHandler = noop>
+	valid_device_ret_t valid(const device_settings& args, MsgHandler fn = {})
+	{
+		auto ret = valid(args.config, fn);
+		if (!terminated(args.name) || !terminated(args.profile) || !terminated(args.id)) {
+			++ret.count;
+			fn("device strings must be terminated");
+		}
+		return ret;
+	}
+
 }

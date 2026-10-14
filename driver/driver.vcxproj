@@ -262,6 +262,7 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="driver.h" />
+    <ClInclude Include="input-pipeline.hpp" />
   </ItemGroup>
   <ItemGroup>
     <ResourceCompile Include="driver.rc" />

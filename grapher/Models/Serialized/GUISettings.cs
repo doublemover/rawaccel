@@ -79,7 +79,7 @@ namespace grapher.Models.Serialized
 
         public void Save()
         {
-            File.WriteAllText(Constants.GuiConfigFileName, JsonConvert.SerializeObject(this));
+            SettingsManager.SaveTextAtomically(Constants.GuiConfigFileName, JsonConvert.SerializeObject(this));
         }
 
         public static GUISettings MaybeLoad()
