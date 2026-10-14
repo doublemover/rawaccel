@@ -15,6 +15,6 @@ $testRunner = Join-Path $vs 'Common7\IDE\CommonExtensions\Microsoft\TestWindow\v
 & $testRunner wrapper-tests\bin\Release\wrapper-tests.dll /Platform:x64 /Logger:trx
 if ($LASTEXITCODE) { throw 'Managed regression tests failed.' }
 $developerShell = Join-Path $vs 'Common7\Tools\VsDevCmd.bat'
-$nativeCommand = '""{0}" -arch=x64 && cl /nologo /std:c++17 /EHsc /O2 /W4 /Icommon tests\native\math_tests.cpp /Fe:math_tests.exe && math_tests.exe && cl /nologo /std:c++17 /EHsc /O2 /fp:fast /W4 /Icommon tests\native\input_tests.cpp /Fe:input_tests.exe && input_tests.exe"' -f $developerShell
+$nativeCommand = 'call "{0}" -arch=x64 && cl /nologo /std:c++17 /EHsc /O2 /W4 /Icommon tests\native\math_tests.cpp /Fe:math_tests.exe && math_tests.exe && cl /nologo /std:c++17 /EHsc /O2 /fp:fast /W4 /Icommon tests\native\input_tests.cpp /Fe:input_tests.exe && input_tests.exe' -f $developerShell
 & cmd /d /s /c $nativeCommand
 if ($LASTEXITCODE) { throw 'MSVC native regression tests failed.' }
